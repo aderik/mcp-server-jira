@@ -39,6 +39,61 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         }
     ]
 }));
+// Function to extract text content from Atlassian Document Format with preserved formatting
+function extractTextFromADF(node, depth = 0) {
+    if (!node)
+        return 'No description';
+    const indent = '  '.repeat(depth);
+    let result = '';
+    if (typeof node === 'string') {
+        return indent + node;
+    }
+    // Handle different node types
+    switch (node.type) {
+        case 'heading':
+            result += `${indent}${node.content?.[0]?.text || ''}\n`;
+            break;
+        case 'paragraph':
+            if (node.content) {
+                const paragraphText = node.content
+                    .map((content) => content.text || '')
+                    .join('')
+                    .trim();
+                if (paragraphText) {
+                    result += `${indent}${paragraphText}\n`;
+                }
+            }
+            break;
+        case 'bulletList':
+        case 'orderedList':
+            if (node.content) {
+                result += node.content
+                    .map((item) => extractTextFromADF(item, depth))
+                    .join('');
+            }
+            break;
+        case 'listItem':
+            if (node.content) {
+                const itemContent = node.content
+                    .map((content) => extractTextFromADF(content, depth + 1))
+                    .join('')
+                    .trim();
+                result += `${indent}• ${itemContent}\n`;
+            }
+            break;
+        default:
+            // Handle nested content
+            if (Array.isArray(node.content)) {
+                result += node.content
+                    .map((content) => extractTextFromADF(content, depth))
+                    .join('');
+            }
+            else if (node.text) {
+                result += indent + node.text;
+            }
+    }
+    return result;
+}
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
@@ -64,6 +119,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 issueIdOrKey: issueKey,
                 fields: ['summary', 'status', 'assignee', 'description', 'created', 'updated']
             });
+            const description = extractTextFromADF(issue.fields.description);
             return {
                 content: [{
                         type: "text",
@@ -72,7 +128,8 @@ Key: ${issue.key}
 Title: ${issue.fields.summary || 'No summary'}
 Status: ${issue.fields.status?.name || 'No status'}
 Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}
-Description: ${issue.fields.description?.toString() || 'No description'}
+Description:
+${description}
 Created: ${issue.fields.created || 'Unknown'}
 Updated: ${issue.fields.updated || 'Unknown'}
 `.trim()
