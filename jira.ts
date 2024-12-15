@@ -43,6 +43,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ["issueKey"]
       }
+    },
+    {
+      name: "add-comment",
+      description: "Add a comment to a specific ticket",
+      inputSchema: {
+        type: "object",
+        properties: {
+          issueKey: { type: "string" },
+          comment: { type: "string" }
+        },
+        required: ["issueKey", "comment"]
+      }
     }
   ]
 }));
@@ -63,7 +75,7 @@ function extractTextFromADF(node: any, depth: number = 0): string {
     case 'heading':
       result += `${indent}${node.content?.[0]?.text || ''}\n`;
       break;
-    
+
     case 'paragraph':
       if (node.content) {
         const paragraphText = node.content
@@ -116,7 +128,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   switch (name) {
     case "list-sprint-tickets": {
       const { projectKey } = args as { projectKey: string };
-      
+
       // Search for issues in active sprints for the project
       const jql = `project = ${projectKey} AND sprint in openSprints()`;
       const issues = await jira.issueSearch.searchForIssuesUsingJql({
@@ -127,7 +139,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return {
         content: [{
           type: "text",
-          text: (issues.issues || []).map((issue: Issue) => 
+          text: (issues.issues || []).map((issue: Issue) =>
             `${issue.key}: ${issue.fields.summary || 'No summary'} (${issue.fields.status?.name || 'No status'}) [Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}]`
           ).join("\n") || 'No issues found'
         }]
@@ -136,7 +148,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     case "get-ticket-details": {
       const { issueKey } = args as { issueKey: string };
-      const issue = await jira.issues.getIssue({ 
+      const issue = await jira.issues.getIssue({
         issueIdOrKey: issueKey,
         fields: ['summary', 'status', 'assignee', 'description', 'created', 'updated']
       }) as Issue;
@@ -156,6 +168,22 @@ ${description}
 Created: ${issue.fields.created || 'Unknown'}
 Updated: ${issue.fields.updated || 'Unknown'}
 `.trim()
+        }]
+      };
+    }
+
+    case "add-comment": {
+      const { issueKey, comment } = args as { issueKey: string; comment: string };
+
+      await jira.issueComments.addComment({
+        issueIdOrKey: issueKey,
+        comment,
+      });
+
+      return {
+        content: [{
+          type: "text",
+          text: `Successfully added comment to ${issueKey}`
         }]
       };
     }

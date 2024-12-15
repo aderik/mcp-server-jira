@@ -36,6 +36,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                 },
                 required: ["issueKey"]
             }
+        },
+        {
+            name: "add-comment",
+            description: "Add a comment to a specific ticket",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    issueKey: { type: "string" },
+                    comment: { type: "string" }
+                },
+                required: ["issueKey", "comment"]
+            }
         }
     ]
 }));
@@ -133,6 +145,19 @@ ${description}
 Created: ${issue.fields.created || 'Unknown'}
 Updated: ${issue.fields.updated || 'Unknown'}
 `.trim()
+                    }]
+            };
+        }
+        case "add-comment": {
+            const { issueKey, comment } = args;
+            await jira.issueComments.addComment({
+                issueIdOrKey: issueKey,
+                comment,
+            });
+            return {
+                content: [{
+                        type: "text",
+                        text: `Successfully added comment to ${issueKey}`
                     }]
             };
         }
