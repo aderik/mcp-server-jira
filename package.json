@@ -1,0 +1,24 @@
+{
+  "name": "jira",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/jira.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx jira.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.3",
+    "@types/node": "^22.10.2",
+    "jira.js": "^2.21.0",
+    "typescript": "^5.7.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.1"
+  }
+}
