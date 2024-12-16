@@ -4,7 +4,7 @@ This is a Model Context Protocol (MCP) server that provides tools for interactin
 
 ## Features
 
-The server provides two tools:
+The server provides the following tools:
 
 1. `list-sprint-tickets`: Gets all tickets in the active sprint for a given project
 
