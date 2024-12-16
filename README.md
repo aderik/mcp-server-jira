@@ -28,6 +28,8 @@ The server provides two tools:
 
 2. Build the TypeScript code:
 
+This step is only needed for Cline on Windows, which currently has an issue executing npx
+
    ```bash
    npm run build
    ```
