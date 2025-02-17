@@ -55,6 +55,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ["issueKey", "comment"]
       }
+    },
+    {
+      name: "update-description",
+      description: "Update the description of a specific ticket",
+      inputSchema: {
+        type: "object",
+        properties: {
+          issueKey: { type: "string" },
+          description: { type: "string" }
+        },
+        required: ["issueKey", "description"]
+      }
     }
   ]
 }));
@@ -184,6 +196,38 @@ Updated: ${issue.fields.updated || 'Unknown'}
         content: [{
           type: "text",
           text: `Successfully added comment to ${issueKey}`
+        }]
+      };
+    }
+
+    case "update-description": {
+      const { issueKey, description } = args as { issueKey: string; description: string };
+
+      await jira.issues.editIssue({
+        issueIdOrKey: issueKey,
+        fields: {
+          description: {
+            type: "doc",
+            version: 1,
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  {
+                    type: "text",
+                    text: description
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      });
+
+      return {
+        content: [{
+          type: "text",
+          text: `Successfully updated description of ${issueKey}`
         }]
       };
     }
