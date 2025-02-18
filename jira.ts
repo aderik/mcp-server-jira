@@ -145,7 +145,7 @@ function extractTextFromADF(node: any, depth: number = 0): string {
 }
 
 // Handle tool execution
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const { name, arguments: args } = request.params;
 
   switch (name) {
@@ -165,7 +165,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           text: (issues.issues || []).map((issue: Issue) =>
             `${issue.key}: ${issue.fields.summary || 'No summary'} (${issue.fields.status?.name || 'No status'}) [Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}]`
           ).join("\n") || 'No issues found'
-        }]
+        }],
+        _meta: {}
       };
     }
 
@@ -173,10 +174,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { issueKey } = args as { issueKey: string };
       const issue = await jira.issues.getIssue({
         issueIdOrKey: issueKey,
-        fields: ['summary', 'status', 'assignee', 'description', 'created', 'updated']
+        fields: ['summary', 'status', 'assignee', 'description', 'created', 'updated', 'issuelinks']
       }) as Issue;
 
       const description = extractTextFromADF(issue.fields.description);
+
+      // Format linked issues
+      const linkedIssues = (issue.fields.issuelinks || []).map(link => {
+        if (link.inwardIssue && link.type?.inward) {
+          return `- ${link.type.inward}: ${link.inwardIssue.key} (${link.inwardIssue.fields?.summary || 'No summary'})`;
+        } else if (link.outwardIssue && link.type?.outward) {
+          return `- ${link.type.outward}: ${link.outwardIssue.key} (${link.outwardIssue.fields?.summary || 'No summary'})`;
+        }
+        return null;
+      }).filter(Boolean).join('\n');
 
       return {
         content: [{
@@ -188,10 +199,13 @@ Status: ${issue.fields.status?.name || 'No status'}
 Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}
 Description:
 ${description}
+Linked Issues:
+${linkedIssues || 'No linked issues'}
 Created: ${issue.fields.created || 'Unknown'}
 Updated: ${issue.fields.updated || 'Unknown'}
 `.trim()
-        }]
+        }],
+        _meta: {}
       };
     }
 
@@ -207,7 +221,8 @@ Updated: ${issue.fields.updated || 'Unknown'}
         content: [{
           type: "text",
           text: `Successfully added comment to ${issueKey}`
-        }]
+        }],
+        _meta: {}
       };
     }
 
@@ -239,7 +254,8 @@ Updated: ${issue.fields.updated || 'Unknown'}
         content: [{
           type: "text",
           text: `Successfully updated description of ${issueKey}`
-        }]
+        }],
+        _meta: {}
       };
     }
 
@@ -259,7 +275,8 @@ Updated: ${issue.fields.updated || 'Unknown'}
           text: (issues.issues || []).map((issue: Issue) =>
             `${issue.key}: ${issue.fields.summary || 'No summary'} (${issue.fields.status?.name || 'No status'}) [Type: ${issue.fields.issuetype?.name || 'Unknown'}, Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}]`
           ).join("\n") || 'No child issues found'
-        }]
+        }],
+        _meta: {}
       };
     }
 
