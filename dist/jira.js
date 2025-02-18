@@ -60,6 +60,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                 },
                 required: ["issueKey", "description"]
             }
+        },
+        {
+            name: "list-child-issues",
+            description: "Get all child issues of a parent ticket",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    parentKey: { type: "string" }
+                },
+                required: ["parentKey"]
+            }
         }
     ]
 }));
@@ -199,6 +210,21 @@ Updated: ${issue.fields.updated || 'Unknown'}
                 content: [{
                         type: "text",
                         text: `Successfully updated description of ${issueKey}`
+                    }]
+            };
+        }
+        case "list-child-issues": {
+            const { parentKey } = args;
+            // Search for issues that have the specified parent
+            const jql = `parent = ${parentKey} ORDER BY created ASC`;
+            const issues = await jira.issueSearch.searchForIssuesUsingJql({
+                jql,
+                fields: ['summary', 'status', 'assignee', 'issuetype']
+            });
+            return {
+                content: [{
+                        type: "text",
+                        text: (issues.issues || []).map((issue) => `${issue.key}: ${issue.fields.summary || 'No summary'} (${issue.fields.status?.name || 'No status'}) [Type: ${issue.fields.issuetype?.name || 'Unknown'}, Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}]`).join("\n") || 'No child issues found'
                     }]
             };
         }
