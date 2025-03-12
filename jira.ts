@@ -23,6 +23,18 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
+      name: "link-tickets",
+      description: "Link two tickets with a 'relates to' relationship",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sourceIssueKey: { type: "string" },
+          targetIssueKey: { type: "string" }
+        },
+        required: ["sourceIssueKey", "targetIssueKey"]
+      }
+    },
+    {
       name: "list-sprint-tickets",
       description: "Get all tickets in the active sprint",
       inputSchema: {
@@ -424,6 +436,66 @@ ${formattedComments}
           content: [{
             type: "text",
             text: errorDetails
+          }],
+          isError: true,
+          _meta: {}
+        };
+      }
+    }
+
+    case "link-tickets": {
+      const { sourceIssueKey, targetIssueKey } = args as { 
+        sourceIssueKey: string; 
+        targetIssueKey: string;
+      };
+
+      try {
+        // Get all issue link types
+        const linkTypes = await jira.issueLinkTypes.getIssueLinkTypes();
+        
+        // Find the "relates to" link type
+        const relatesTo = linkTypes.issueLinkTypes?.find(
+          linkType => 
+            linkType.name?.toLowerCase() === "relates to" || 
+            linkType.inward?.toLowerCase() === "relates to" || 
+            linkType.outward?.toLowerCase() === "relates to"
+        );
+        
+        if (!relatesTo) {
+          throw new Error("Could not find 'relates to' link type");
+        }
+        
+        // Create the link between the issues
+        await jira.issueLinks.linkIssues({
+          type: {
+            name: relatesTo.name || "Relates"
+          },
+          inwardIssue: {
+            key: targetIssueKey
+          },
+          outwardIssue: {
+            key: sourceIssueKey
+          }
+        });
+        
+        return {
+          content: [{
+            type: "text",
+            text: `🤖 Successfully linked ${sourceIssueKey} to ${targetIssueKey} with relationship "${relatesTo.name || "Relates"}"`
+          }],
+          _meta: {}
+        };
+      } catch (error: any) {
+        // Only log errors to stderr, not stdout
+        console.error(`Error linking tickets: ${error.message}`);
+        if (error.response) {
+          console.error(`Response data: ${JSON.stringify(error.response.data)}`);
+        }
+        
+        return {
+          content: [{
+            type: "text",
+            text: `Error linking tickets: ${error.message}`
           }],
           isError: true,
           _meta: {}
