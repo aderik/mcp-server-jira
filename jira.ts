@@ -191,7 +191,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const { issueKey } = args as { issueKey: string };
       const issue = await jira.issues.getIssue({
         issueIdOrKey: issueKey,
-        fields: ['summary', 'status', 'assignee', 'description', 'created', 'updated', 'issuelinks']
+        fields: ['summary', 'status', 'assignee', 'description', 'created', 'updated', 'issuelinks', 'comment']
       }) as Issue;
 
       const description = extractTextFromADF(issue.fields.description);
@@ -205,6 +205,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         }
         return null;
       }).filter(Boolean).join('\n');
+
+      // Format comments
+      const comments = issue.fields.comment?.comments || [];
+      const formattedComments = comments.length > 0 
+        ? comments.map(comment => {
+            const created = comment.created ? new Date(comment.created).toLocaleString() : 'Unknown date';
+            const author = comment.author?.displayName || 'Unknown user';
+            
+            // Handle comment body which might be in Atlassian Document Format
+            let body = '';
+            if (typeof comment.body === 'string') {
+              body = comment.body;
+            } else if (comment.body && typeof comment.body === 'object') {
+              // Try to extract text from ADF format
+              body = extractTextFromADF(comment.body);
+            } else {
+              body = 'No content';
+            }
+            
+            return `[${created}] ${author}:\n${body}`;
+          }).join('\n\n')
+        : 'No comments';
 
       return {
         content: [{
@@ -220,6 +242,9 @@ Linked Issues:
 ${linkedIssues || 'No linked issues'}
 Created: ${issue.fields.created || 'Unknown'}
 Updated: ${issue.fields.updated || 'Unknown'}
+
+Comments:
+${formattedComments}
 `.trim()
         }],
         _meta: {}
