@@ -203,7 +203,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const { issueKey } = args as { issueKey: string };
       const issue = await jira.issues.getIssue({
         issueIdOrKey: issueKey,
-        fields: ['summary', 'status', 'assignee', 'description', 'created', 'updated', 'issuelinks', 'comment']
+        fields: ['summary', 'status', 'assignee', 'description', 'created', 'updated', 'issuelinks', 'comment', 'parent', 'issuetype']
       }) as Issue;
 
       const description = extractTextFromADF(issue.fields.description);
@@ -246,8 +246,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
           text: `
 Key: ${issue.key}
 Title: ${issue.fields.summary || 'No summary'}
+Type: ${issue.fields.issuetype?.name || 'Unknown type'}
 Status: ${issue.fields.status?.name || 'No status'}
 Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}
+Parent: ${issue.fields.parent ? `${issue.fields.parent.key} (${issue.fields.parent.fields?.issuetype?.name || 'Unknown type'}) - ${issue.fields.parent.fields?.summary || 'No summary'}` : 'No parent'}
 Description:
 ${description}
 Linked Issues:
