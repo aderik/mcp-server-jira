@@ -7,16 +7,31 @@ This is a Model Context Protocol (MCP) server that provides tools for interactin
 The server provides the following tools:
 
 1. `list-sprint-tickets`: Gets all tickets in the active sprint for a given project
-
    - Required parameter: `projectKey` (string)
 
 2. `get-ticket-details`: Gets detailed information about a specific ticket
-
    - Required parameter: `issueKey` (string)
 
 3. `add-comment`: Adds a comment to a specific ticket
    - Required parameter: `issueKey` (string)
    - Required parameter: `comment` (string)
+
+4. `link-tickets`: Links two tickets with a 'relates to' relationship
+   - Required parameter: `sourceIssueKey` (string)
+   - Required parameter: `targetIssueKey` (string)
+
+5. `update-description`: Updates the description of a specific ticket
+   - Required parameter: `issueKey` (string)
+   - Required parameter: `description` (string)
+
+6. `list-child-issues`: Gets all child issues of a parent ticket
+   - Required parameter: `parentKey` (string)
+
+7. `create-sub-ticket`: Creates a sub-ticket (child issue) for a parent ticket
+   - Required parameter: `parentKey` (string)
+   - Required parameter: `summary` (string)
+   - Optional parameter: `description` (string)
+   - Optional parameter: `issueType` (string) - The name of the sub-task issue type (e.g., 'Sub-task')
 
 ## Setup
 
