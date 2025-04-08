@@ -206,18 +206,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                 fields: ['summary', 'status', 'assignee', 'description', 'created', 'updated', 'issuelinks', 'comment', 'parent', 'issuetype', 'subtasks']
             });
             const description = extractTextFromADF(issue.fields.description);
-            // Format linked issues and subtasks
+            // Format linked issues
             const linkedIssues = (issue.fields.issuelinks || []).map(link => {
-                if (link.inwardIssue && link.type?.inward) {
-                    return `- ${link.type.inward}: ${link.inwardIssue.key} [${link.inwardIssue.fields?.issuetype?.name || 'Unknown type'}] (${link.inwardIssue.fields?.summary || 'No summary'})`;
-                }
-                else if (link.outwardIssue && link.type?.outward) {
-                    return `- ${link.type.outward}: ${link.outwardIssue.key} [${link.outwardIssue.fields?.issuetype?.name || 'Unknown type'}] (${link.outwardIssue.fields?.summary || 'No summary'})`;
-                }
-                return null;
+                const relatedIssue = link.inwardIssue || link.outwardIssue;
+                if (!relatedIssue)
+                    return null;
+                return `${relatedIssue.key} ${relatedIssue.fields?.summary || 'No summary'} [${relatedIssue.fields?.issuetype?.name || 'Unknown type'}, ${relatedIssue.fields?.status?.name || 'Unknown status'}]`;
             }).filter(Boolean).join('\n');
             // Format subtasks
-            const subtasks = (issue.fields.subtasks || []).map(subtask => `- Sub-task: ${subtask.key} [${subtask.fields?.issuetype?.name || 'Unknown type'}] (${subtask.fields?.summary || 'No summary'})`).join('\n');
+            const subtasks = (issue.fields.subtasks || []).map(subtask => `${subtask.key} ${subtask.fields?.summary || 'No summary'} [${subtask.fields?.issuetype?.name || 'Unknown type'}, ${subtask.fields?.status?.name || 'Unknown status'}]`).join('\n');
             // Combine linked issues and subtasks
             const relatedIssues = [
                 linkedIssues || 'No linked issues',
