@@ -224,20 +224,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const { issueKey } = args as { issueKey: string };
       const issue = await jira.issues.getIssue({
         issueIdOrKey: issueKey,
-        fields: ['summary', 'status', 'assignee', 'description', 'created', 'updated', 'issuelinks', 'comment', 'parent', 'issuetype']
+        fields: ['summary', 'status', 'assignee', 'description', 'created', 'updated', 'issuelinks', 'comment', 'parent', 'issuetype', 'subtasks']
       }) as Issue;
 
       const description = extractTextFromADF(issue.fields.description);
 
-      // Format linked issues
+      // Format linked issues and subtasks
       const linkedIssues = (issue.fields.issuelinks || []).map(link => {
         if (link.inwardIssue && link.type?.inward) {
-          return `- ${link.type.inward}: ${link.inwardIssue.key} (${link.inwardIssue.fields?.summary || 'No summary'})`;
+          return `- ${link.type.inward}: ${link.inwardIssue.key} [${link.inwardIssue.fields?.issuetype?.name || 'Unknown type'}] (${link.inwardIssue.fields?.summary || 'No summary'})`;
         } else if (link.outwardIssue && link.type?.outward) {
-          return `- ${link.type.outward}: ${link.outwardIssue.key} (${link.outwardIssue.fields?.summary || 'No summary'})`;
+          return `- ${link.type.outward}: ${link.outwardIssue.key} [${link.outwardIssue.fields?.issuetype?.name || 'Unknown type'}] (${link.outwardIssue.fields?.summary || 'No summary'})`;
         }
         return null;
       }).filter(Boolean).join('\n');
+
+      // Format subtasks
+      const subtasks = (issue.fields.subtasks || []).map(subtask => 
+        `- Sub-task: ${subtask.key} [${subtask.fields?.issuetype?.name || 'Unknown type'}] (${subtask.fields?.summary || 'No summary'})`
+      ).join('\n');
+
+      // Combine linked issues and subtasks
+      const relatedIssues = [
+        linkedIssues || 'No linked issues',
+        subtasks || 'No sub-tasks'
+      ].filter(section => section).join('\n\n');
 
       // Format comments
       const comments = issue.fields.comment?.comments || [];
@@ -273,8 +284,8 @@ Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}
 Parent: ${issue.fields.parent ? `${issue.fields.parent.key} (${issue.fields.parent.fields?.issuetype?.name || 'Unknown type'}) - ${issue.fields.parent.fields?.summary || 'No summary'}` : 'No parent'}
 Description:
 ${description}
-Linked Issues:
-${linkedIssues || 'No linked issues'}
+Related Issues:
+${relatedIssues}
 Created: ${issue.fields.created || 'Unknown'}
 Updated: ${issue.fields.updated || 'Unknown'}
 
