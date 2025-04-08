@@ -107,6 +107,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ["parentKey", "summary"]
       }
+    },
+    {
+      name: "create-ticket",
+      description: "Create a new ticket (regular issue or sub-task)",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectKey: { type: "string" },
+          summary: { type: "string" },
+          description: { type: "string" },
+          issueType: { 
+            type: "string", 
+            description: "The name of the issue type (e.g., 'Task', 'Bug', etc.)" 
+          },
+          parentKey: { 
+            type: "string",
+            description: "Optional parent issue key. If provided, creates a sub-task."
+          }
+        },
+        required: ["projectKey", "summary"]
+      }
     }
   ]
 }));
@@ -505,10 +526,231 @@ ${formattedComments}
       }
     }
 
+    case "create-ticket": {
+      const { projectKey, summary, description = "", issueType = "Task", parentKey } = args as {
+        projectKey: string;
+        summary: string;
+        description?: string;
+        issueType?: string;
+        parentKey?: string;
+      };
+
+      try {
+        // If parentKey is provided, reuse sub-ticket creation logic
+        if (parentKey) {
+          const subTicketArgs = {
+            parentKey,
+            summary,
+            description,
+            issueType
+          };
+          return await handleSubTicketCreation(subTicketArgs);
+        }
+
+        // Get available issue types for the project
+        const createMeta = await jira.issues.getCreateIssueMeta({
+          projectKeys: [projectKey],
+          expand: "projects.issuetypes"
+        });
+
+        const project = createMeta.projects?.[0];
+        if (!project) {
+          throw new Error(`Project ${projectKey} not found`);
+        }
+
+        // Filter for non-subtask issue types
+        const standardTypes = project.issuetypes?.filter((it: any) => !it.subtask) || [];
+        const availableIssueTypes = standardTypes.map((it: any) => it.name);
+        console.error(`Available issue types: ${availableIssueTypes.join(', ')}`);
+
+        // Use the first available type if the requested one doesn't exist
+        const finalIssueType = availableIssueTypes.includes(issueType)
+          ? issueType
+          : (availableIssueTypes[0] || "Task");
+
+        console.error(`Using issue type: ${finalIssueType}`);
+
+        // Create the issue
+        const createIssuePayload = {
+          fields: {
+            summary: summary,
+            project: {
+              key: projectKey
+            },
+            issuetype: {
+              name: finalIssueType
+            },
+            description: description ? {
+              type: "doc",
+              version: 1,
+              content: [
+                {
+                  type: "paragraph",
+                  content: [
+                    {
+                      type: "text",
+                      text: description
+                    }
+                  ]
+                }
+              ]
+            } : undefined
+          }
+        };
+
+        console.error(`Create issue payload: ${JSON.stringify(createIssuePayload)}`);
+
+        const createdIssue = await jira.issues.createIssue(createIssuePayload);
+
+        return {
+          content: [{
+            type: "text",
+            text: `🤖 Successfully created ticket ${createdIssue.key} in project ${projectKey}`
+          }],
+          _meta: {}
+        };
+      } catch (error: any) {
+        console.error(`Error creating ticket: ${error.message}`);
+        if (error.response) {
+          console.error(`Response data: ${JSON.stringify(error.response.data)}`);
+        }
+
+        // Prepare a detailed error message
+        let errorDetails = `Error creating ticket: ${error.message}`;
+
+        if (error.response && error.response.data) {
+          const responseData = typeof error.response.data === 'object'
+            ? JSON.stringify(error.response.data, null, 2)
+            : error.response.data.toString();
+
+          errorDetails += `\n\nResponse data:\n${responseData}`;
+        }
+
+        return {
+          content: [{
+            type: "text",
+            text: errorDetails
+          }],
+          isError: true,
+          _meta: {}
+        };
+      }
+    }
+
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
 });
+
+// Helper function to handle sub-ticket creation
+async function handleSubTicketCreation(args: { 
+  parentKey: string; 
+  summary: string; 
+  description?: string;
+  issueType?: string;
+}) {
+  const { parentKey, summary, description = "", issueType = "Sub-task" } = args;
+
+  try {
+    // First, get the parent issue to determine the project
+    const parentIssue = await jira.issues.getIssue({
+      issueIdOrKey: parentKey,
+      fields: ['project', 'issuetype']
+    });
+
+    if (!parentIssue || !parentIssue.fields.project) {
+      throw new Error(`Parent issue ${parentKey} not found or has no project`);
+    }
+
+    console.error(`Creating sub-task for ${parentKey} in project ${parentIssue.fields.project.key}`);
+    
+    // Get available issue types to verify the requested type exists
+    const createMeta = await jira.issues.getCreateIssueMeta({
+      projectIds: [parentIssue.fields.project.id],
+      expand: "projects.issuetypes"
+    });
+    
+    // Filter for subtask issue types
+    const subtaskTypes = createMeta.projects?.[0]?.issuetypes?.filter((it: any) => it.subtask) || [];
+    const availableIssueTypes = subtaskTypes.map((it: any) => it.name);
+    console.error(`Available subtask types: ${availableIssueTypes.join(', ')}`);
+    
+    // Use the first available subtask type if the requested one doesn't exist
+    const finalIssueType = availableIssueTypes.includes(issueType) 
+      ? issueType 
+      : (availableIssueTypes[0] || "Sub-task");
+    
+    console.error(`Using issue type: ${finalIssueType}`);
+
+    // Create the sub-task
+    const createIssuePayload = {
+      fields: {
+        summary: summary,
+        parent: {
+          key: parentKey
+        },
+        project: {
+          id: parentIssue.fields.project.id
+        },
+        issuetype: {
+          name: finalIssueType
+        },
+        description: description ? {
+          type: "doc",
+          version: 1,
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                {
+                  type: "text",
+                  text: description
+                }
+              ]
+            }
+          ]
+        } : undefined
+      }
+    };
+    
+    console.error(`Create issue payload: ${JSON.stringify(createIssuePayload)}`);
+    
+    const createdIssue = await jira.issues.createIssue(createIssuePayload);
+
+    return {
+      content: [{
+        type: "text",
+        text: `🤖 Successfully created sub-ticket ${createdIssue.key} for parent ${parentKey}`
+      }],
+      _meta: {}
+    };
+  } catch (error: any) {
+    console.error(`Error creating sub-ticket: ${error.message}`);
+    if (error.response) {
+      console.error(`Response data: ${JSON.stringify(error.response.data)}`);
+    }
+    
+    // Prepare a detailed error message
+    let errorDetails = `Error creating sub-ticket: ${error.message}`;
+    
+    if (error.response && error.response.data) {
+      const responseData = typeof error.response.data === 'object' 
+        ? JSON.stringify(error.response.data, null, 2) 
+        : error.response.data.toString();
+      
+      errorDetails += `\n\nResponse data:\n${responseData}`;
+    }
+    
+    return {
+      content: [{
+        type: "text",
+        text: errorDetails
+      }],
+      isError: true,
+      _meta: {}
+    };
+  }
+}
 
 // Start server
 const transport = new StdioServerTransport();
