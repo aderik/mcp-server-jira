@@ -35,7 +35,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     },
                     maxResults: {
                         type: "number",
-                        description: "Optional maximum number of results to return (default: 20)"
+                        description: "Optional maximum number of results to return (default: 20, max: 100)"
+                    },
+                    startAt: {
+                        type: "number",
+                        description: "Optional pagination offset, specifies the index of the first issue to return (0-based, default: 0)"
                     }
                 }
             }
@@ -209,7 +213,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
     switch (name) {
         case "search-issues": {
-            const { projectKey, issueType, statusCategory, maxResults = 20 } = args;
+            const { projectKey, issueType, statusCategory, maxResults = 20, startAt = 0 } = args;
+            // Validate maxResults (must be between 1 and 100)
+            const validatedMaxResults = Math.min(Math.max(1, maxResults), 100);
+            if (validatedMaxResults !== maxResults) {
+                console.error(`Adjusted maxResults from ${maxResults} to ${validatedMaxResults} (valid range: 1-100)`);
+            }
+            // Validate startAt (must be non-negative)
+            const validatedStartAt = Math.max(0, startAt);
+            if (validatedStartAt !== startAt) {
+                console.error(`Adjusted startAt from ${startAt} to ${validatedStartAt} (must be non-negative)`);
+            }
             // Build JQL query based on provided filters
             let jqlParts = [];
             if (projectKey) {
@@ -241,7 +255,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             try {
                 const issues = await jira.issueSearch.searchForIssuesUsingJql({
                     jql,
-                    maxResults,
+                    maxResults: validatedMaxResults,
+                    startAt: validatedStartAt,
                     fields: ['summary', 'status', 'issuetype', 'assignee', 'updated', 'statusCategory']
                 });
                 // Format the results
@@ -253,12 +268,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                     return `${issue.key}: ${issue.fields.summary || 'No summary'} [${issue.fields.issuetype?.name || 'Unknown type'}, ${issue.fields.status?.name || 'No status'} (${statusCat}), Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}, Updated: ${updated}]`;
                 });
                 const totalResults = issues.total || 0;
-                const resultsInfo = `Found ${totalResults} issues${totalResults > maxResults ? ` (showing first ${maxResults})` : ''}`;
+                const startIndex = validatedStartAt + 1;
+                const endIndex = Math.min(validatedStartAt + validatedMaxResults, totalResults);
+                // Create pagination information
+                const paginationInfo = totalResults > 0
+                    ? `Showing results ${startIndex}-${endIndex} of ${totalResults}`
+                    : `No results found`;
+                // Add pagination navigation hints if there are more results
+                let navigationHints = '';
+                if (validatedStartAt > 0) {
+                    const prevStartAt = Math.max(0, validatedStartAt - validatedMaxResults);
+                    navigationHints += `\nPrevious page: Use startAt=${prevStartAt}`;
+                }
+                if (endIndex < totalResults) {
+                    const nextStartAt = validatedStartAt + validatedMaxResults;
+                    navigationHints += `\nNext page: Use startAt=${nextStartAt}`;
+                }
                 return {
                     content: [{
                             type: "text",
                             text: formattedIssues.length > 0
-                                ? `${resultsInfo}\n\n${formattedIssues.join('\n')}`
+                                ? `${paginationInfo}${navigationHints}\n\n${formattedIssues.join('\n')}`
                                 : 'No issues found matching the criteria'
                         }],
                     _meta: {}
