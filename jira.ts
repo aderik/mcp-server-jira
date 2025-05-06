@@ -23,6 +23,31 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
+      name: "search-issues",
+      description: "Search for issues with optional filters for project, issue type, and status category",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectKey: {
+            type: "string",
+            description: "Optional project key to filter issues by project"
+          },
+          issueType: {
+            type: "string",
+            description: "Optional issue type to filter issues (e.g., 'Bug', 'Task', 'Story')"
+          },
+          statusCategory: {
+            type: "string",
+            description: "Optional status category to filter issues. Must be one of: 'To Do', 'In Progress', 'Done'"
+          },
+          maxResults: {
+            type: "number",
+            description: "Optional maximum number of results to return (default: 20)"
+          }
+        }
+      }
+    },
+    {
       name: "link-tickets",
       description: "Link two tickets with a 'relates to' relationship",
       inputSchema: {
@@ -199,6 +224,95 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const { name, arguments: args } = request.params;
 
   switch (name) {
+    case "search-issues": {
+      const { projectKey, issueType, statusCategory, maxResults = 20 } = args as {
+        projectKey?: string;
+        issueType?: string;
+        statusCategory?: string;
+        maxResults?: number;
+      };
+
+      // Build JQL query based on provided filters
+      let jqlParts: string[] = [];
+      
+      if (projectKey) {
+        jqlParts.push(`project = ${projectKey}`);
+      }
+      
+      if (issueType) {
+        jqlParts.push(`issuetype = "${issueType}"`);
+      }
+      
+      if (statusCategory) {
+        // Validate status category is one of the allowed values
+        const validStatusCategories = ['To Do', 'In Progress', 'Done'];
+        if (!validStatusCategories.includes(statusCategory)) {
+          return {
+            content: [{
+              type: "text",
+              text: `Error: statusCategory must be one of: ${validStatusCategories.join(', ')}`
+            }],
+            isError: true,
+            _meta: {}
+          };
+        }
+        
+        jqlParts.push(`statusCategory = "${statusCategory}"`);
+      }
+      
+      // Default ordering by updated date if no filters provided
+      const jql = jqlParts.length > 0
+        ? `${jqlParts.join(' AND ')} ORDER BY updated DESC`
+        : 'ORDER BY updated DESC';
+      
+      console.error(`Executing JQL query: ${jql}`);
+      
+      try {
+        const issues = await jira.issueSearch.searchForIssuesUsingJql({
+          jql,
+          maxResults,
+          fields: ['summary', 'status', 'issuetype', 'assignee', 'updated', 'statusCategory']
+        });
+        
+        // Format the results
+        const formattedIssues = (issues.issues || []).map((issue: Issue) => {
+          const statusCat = issue.fields.status?.statusCategory?.name || 'Unknown';
+          const updated = issue.fields.updated
+            ? new Date(issue.fields.updated).toLocaleString()
+            : 'Unknown';
+            
+          return `${issue.key}: ${issue.fields.summary || 'No summary'} [${issue.fields.issuetype?.name || 'Unknown type'}, ${issue.fields.status?.name || 'No status'} (${statusCat}), Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}, Updated: ${updated}]`;
+        });
+        
+        const totalResults = issues.total || 0;
+        const resultsInfo = `Found ${totalResults} issues${totalResults > maxResults ? ` (showing first ${maxResults})` : ''}`;
+        
+        return {
+          content: [{
+            type: "text",
+            text: formattedIssues.length > 0
+              ? `${resultsInfo}\n\n${formattedIssues.join('\n')}`
+              : 'No issues found matching the criteria'
+          }],
+          _meta: {}
+        };
+      } catch (error: any) {
+        console.error(`Error searching for issues: ${error.message}`);
+        if (error.response) {
+          console.error(`Response data: ${JSON.stringify(error.response.data)}`);
+        }
+        
+        return {
+          content: [{
+            type: "text",
+            text: `Error searching for issues: ${error.message}`
+          }],
+          isError: true,
+          _meta: {}
+        };
+      }
+    }
+    
     case "list-sprint-tickets": {
       const { projectKey } = args as { projectKey: string };
 
