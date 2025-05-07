@@ -4,6 +4,14 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprot
 import { Version3Client, Version3Models } from "jira.js";
 import { Issue } from "jira.js/out/version3/models";
 
+// Custom fields configuration - read from environment variable
+const customFields = process.env.JIRA_CUSTOM_FIELDS
+  ? process.env.JIRA_CUSTOM_FIELDS.split(',').map(field => field.trim())
+  : [];
+
+// Map to store custom field information (name to ID mapping)
+const customFieldsMap = new Map<string, string>();
+
 const jira = new Version3Client({
   host: process.env.JIRA_HOST!,
   authentication: {
@@ -14,10 +22,74 @@ const jira = new Version3Client({
   }
 });
 
+// Initialize custom fields mapping
+async function initializeCustomFields() {
+  try {
+    // Fetch all fields from Jira
+    const fieldsResponse = await jira.issueFields.getFields();
+    
+    // Process custom fields from configuration
+    for (const fieldName of customFields) {
+      const field = fieldsResponse.find(f => f.name === fieldName && f.custom);
+      if (field?.id) {
+        customFieldsMap.set(fieldName, field.id);
+        console.error(`Mapped custom field "${fieldName}" to ID "${field.id}"`);
+      } else {
+        console.error(`Warning: Custom field "${fieldName}" not found in Jira or has no id ${JSON.stringify(field)}`);
+      }
+    }
+  } catch (error: any) {
+    console.error(`Error initializing custom fields: ${error.message}`);
+  }
+}
+
+// Helper function to format field values for display
+function formatFieldValue(value: any): string {
+  if (value === null || value === undefined) {
+    return 'Not set';
+  }
+  
+  if (typeof value === 'object') {
+    // Handle Atlassian Document Format
+    if (value.type === 'doc') {
+      return extractTextFromADF(value);
+    }
+    
+    // Handle user objects
+    if (value.displayName) {
+      return value.displayName;
+    }
+    
+    // Handle array values
+    if (Array.isArray(value)) {
+      return value.map(item => formatFieldValue(item)).join(', ');
+    }
+    
+    // Default object handling
+    return JSON.stringify(value);
+  }
+  
+  // Simple values
+  return String(value);
+}
+
 const server = new Server(
   { name: "jira-server", version: "1.0.0" },
   { capabilities: { tools: {}, resources: {} } }
 );
+
+// Simple update-issue schema
+const updateIssueSchema = {
+  type: "object",
+  properties: {
+    issueKey: { type: "string" },
+    fields: {
+      type: "object",
+      description: "Object containing field names and their new values. Can include both standard fields (summary, description) and custom fields."
+    }
+  },
+  required: ["issueKey", "fields"]
+};
 
 // List available tools
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -156,6 +228,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           }
         },
         required: ["projectKey", "summary"]
+      }
+    },
+    {
+      name: "update-issue",
+      description: "Update fields of a specific ticket, including custom fields",
+      inputSchema: updateIssueSchema
+    },
+    {
+      name: "list-issue-fields",
+      description: "List all available issue fields in Jira, including custom fields",
+      inputSchema: {
+        type: "object",
+        properties: {
+          includeCustomOnly: {
+            type: "boolean",
+            description: "Optional. If true, only custom fields will be returned. Default: false"
+          }
+        }
       }
     }
   ]
@@ -372,9 +462,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
     case "get-ticket-details": {
       const { issueKey } = args as { issueKey: string };
+      
+      // Standard fields to fetch
+      const standardFields = ['summary', 'status', 'assignee', 'description', 'created', 'updated', 'issuelinks', 'comment', 'parent', 'issuetype', 'subtasks'];
+      
+      // Add custom fields to the fields list
+      const fieldsToFetch = [...standardFields, ...Array.from(customFieldsMap.values())];
+      
       const issue = await jira.issues.getIssue({
         issueIdOrKey: issueKey,
-        fields: ['summary', 'status', 'assignee', 'description', 'created', 'updated', 'issuelinks', 'comment', 'parent', 'issuetype', 'subtasks']
+        fields: fieldsToFetch
       }) as Issue;
 
       const description = extractTextFromADF(issue.fields.description);
@@ -420,6 +517,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
           }).join('\n\n')
         : 'No comments';
 
+      // Process custom fields
+      const customFieldsData: Record<string, string> = {};
+      for (const [fieldName, fieldId] of customFieldsMap.entries()) {
+        if (issue.fields[fieldId] !== undefined) {
+          customFieldsData[fieldName] = formatFieldValue(issue.fields[fieldId]);
+        }
+      }
+      
+      // Format custom fields for display
+      const customFieldsSection = Object.keys(customFieldsData).length > 0
+        ? `Custom Fields:
+${Object.entries(customFieldsData).map(([name, value]) => `${name}: ${value}`).join('\n')}`
+        : 'No custom fields configured';
+
       return {
         content: [{
           type: "text",
@@ -436,6 +547,8 @@ Related Issues:
 ${relatedIssues}
 Created: ${issue.fields.created || 'Unknown'}
 Updated: ${issue.fields.updated || 'Unknown'}
+
+${customFieldsSection}
 
 Comments:
 ${formattedComments}
@@ -796,6 +909,196 @@ ${formattedComments}
       }
     }
 
+    case "update-issue": {
+      const { issueKey, fields } = args as {
+        issueKey: string;
+        fields: Record<string, any>;
+      };
+      
+      try {
+        // Prepare the fields object for the Jira API
+        const jiraFields: Record<string, any> = {};
+        
+        // Process standard fields
+        if (fields.summary !== undefined) {
+          jiraFields.summary = fields.summary;
+        }
+        
+        if (fields.description !== undefined) {
+          jiraFields.description = {
+            type: "doc",
+            version: 1,
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  {
+                    type: "text",
+                    text: fields.description
+                  }
+                ]
+              }
+            ]
+          };
+        }
+        
+        // Process custom fields
+        for (const [fieldName, fieldId] of customFieldsMap.entries()) {
+          if (fields[fieldName] !== undefined) {
+            jiraFields[fieldId] = fields[fieldName];
+          }
+        }
+        
+        // Log the fields being updated
+        console.error(`Updating issue ${issueKey} with fields: ${JSON.stringify(jiraFields)}`);
+        
+        // Update the issue
+        await jira.issues.editIssue({
+          issueIdOrKey: issueKey,
+          fields: jiraFields
+        });
+        
+        // Get the list of updated field names for the response
+        const updatedFieldNames = [];
+        
+        // Add standard fields
+        for (const key of Object.keys(jiraFields)) {
+          if (!key.startsWith('customfield_')) {
+            updatedFieldNames.push(key);
+          }
+        }
+        
+        // Add custom fields by name if we know them
+        for (const [fieldName, fieldId] of customFieldsMap.entries()) {
+          if (jiraFields[fieldId] !== undefined) {
+            updatedFieldNames.push(fieldName);
+          }
+        }
+        
+        // Add custom fields by ID if we don't know their names
+        for (const key of Object.keys(jiraFields)) {
+          if (key.startsWith('customfield_') && !Array.from(customFieldsMap.values()).includes(key)) {
+            updatedFieldNames.push(key);
+          }
+        }
+        
+        const fieldsText = updatedFieldNames.length > 0
+          ? updatedFieldNames.join(', ')
+          : 'No fields were updated';
+        
+        return {
+          content: [{
+            type: "text",
+            text: `Successfully updated issue ${issueKey}. Updated fields: ${fieldsText}`
+          }],
+          _meta: {}
+        };
+      } catch (error: any) {
+        console.error(`Error updating issue: ${error.message}`);
+        if (error.response) {
+          console.error(`Response data: ${JSON.stringify(error.response.data)}`);
+        }
+        
+        // Prepare a detailed error message
+        let errorDetails = `Error updating issue: ${error.message}`;
+        
+        if (error.response && error.response.data) {
+          const responseData = typeof error.response.data === 'object'
+            ? JSON.stringify(error.response.data, null, 2)
+            : error.response.data.toString();
+          
+          errorDetails += `\n\nResponse data:\n${responseData}`;
+        }
+        
+        return {
+          content: [{
+            type: "text",
+            text: errorDetails
+          }],
+          isError: true,
+          _meta: {}
+        };
+      }
+    }
+
+    case "list-issue-fields": {
+      const { includeCustomOnly = false } = args as { includeCustomOnly?: boolean };
+      
+      try {
+        // Fetch all fields from Jira
+        const fieldsResponse = await jira.issueFields.getFields();
+        
+        // Filter fields based on the includeCustomOnly parameter
+        const filteredFields = includeCustomOnly
+          ? fieldsResponse.filter(field => field.custom)
+          : fieldsResponse;
+        
+        // Format the fields for display
+        const formattedFields = filteredFields.map(field => {
+          const isConfigured = field.name ? customFieldsMap.has(field.name) : false;
+          return {
+            id: field.id || '',
+            name: field.name || 'Unnamed Field',
+            custom: field.custom || false,
+            configuredForAutoFetch: isConfigured,
+            // Use schema type as description if available, otherwise a default message
+            description: field.schema?.type ? `Type: ${field.schema.type}` : 'No description available'
+          };
+        });
+        
+        // Group fields by whether they are custom or not
+        const standardFields = formattedFields.filter(field => !field.custom);
+        const customFields = formattedFields.filter(field => field.custom);
+        
+        // Create the response text
+        let responseText = '';
+        
+        if (!includeCustomOnly && standardFields.length > 0) {
+          responseText += `Standard Fields (${standardFields.length}):\n`;
+          responseText += standardFields.map(field =>
+            `${field.name} (${field.id}): ${field.description}`
+          ).join('\n');
+        }
+        
+        if (customFields.length > 0) {
+          if (responseText) responseText += '\n\n';
+          responseText += `Custom Fields (${customFields.length}):\n`;
+          responseText += customFields.map(field => {
+            const configuredMark = field.configuredForAutoFetch ? ' ✓' : '';
+            return `${field.name}${configuredMark} (${field.id}): ${field.description}`;
+          }).join('\n');
+          
+          responseText += '\n\n✓ = Configured for automatic fetching with issue details';
+        }
+        
+        if (!responseText) {
+          responseText = 'No fields found';
+        }
+        
+        return {
+          content: [{
+            type: "text",
+            text: responseText
+          }],
+          _meta: {}
+        };
+      } catch (error: any) {
+        console.error(`Error listing issue fields: ${error.message}`);
+        if (error.response) {
+          console.error(`Response data: ${JSON.stringify(error.response.data)}`);
+        }
+        
+        return {
+          content: [{
+            type: "text",
+            text: `Error listing issue fields: ${error.message}`
+          }],
+          isError: true,
+          _meta: {}
+        };
+      }
+    }
+
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -912,5 +1215,18 @@ async function handleSubTicketCreation(args: {
 }
 
 // Start server
-const transport = new StdioServerTransport();
-await server.connect(transport);
+(async () => {
+  try {
+    // Initialize custom fields mapping
+    console.error('Initializing custom fields...');
+    await initializeCustomFields();
+    console.error(`Initialized ${customFieldsMap.size} custom fields`);
+    
+    // Start the server
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+  } catch (error: any) {
+    console.error(`Error starting server: ${error.message}`);
+    process.exit(1);
+  }
+})();
