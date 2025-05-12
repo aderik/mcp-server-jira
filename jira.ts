@@ -28,14 +28,24 @@ async function initializeCustomFields() {
     // Fetch all fields from Jira
     const fieldsResponse = await jira.issueFields.getFields();
     
-    // Process custom fields from configuration
-    for (const fieldName of customFields) {
-      const field = fieldsResponse.find(f => f.name === fieldName && f.custom);
-      if (field?.id) {
-        customFieldsMap.set(fieldName, field.id);
-        console.error(`Mapped custom field "${fieldName}" to ID "${field.id}"`);
-      } else {
-        console.error(`Warning: Custom field "${fieldName}" not found in Jira or has no id ${JSON.stringify(field)}`);
+    // First, map all custom fields automatically
+    const allCustomFields = fieldsResponse.filter(f => f.custom && f.name && f.id);
+    for (const field of allCustomFields) {
+      if (field.name && field.id) {
+        customFieldsMap.set(field.name, field.id);
+      }
+    }
+    console.error(`Mapped ${customFieldsMap.size} custom fields automatically`);
+    
+    // Then, log the specifically configured fields for visibility
+    if (customFields.length > 0) {
+      console.error(`Configured custom fields: ${customFields.join(', ')}`);
+      for (const fieldName of customFields) {
+        if (customFieldsMap.has(fieldName)) {
+          console.error(`Configured field "${fieldName}" is mapped to ID "${customFieldsMap.get(fieldName)}"`);
+        } else {
+          console.error(`Warning: Configured field "${fieldName}" not found in Jira`);
+        }
       }
     }
   } catch (error: any) {
@@ -928,20 +938,46 @@ ${formattedComments}
           };
         }
         
-        // Log the fields being updated
-        console.error(`Updating issue ${issueKey} with fields: ${JSON.stringify(fields)}`);
+        // Log the current custom field mappings for debugging
+        console.error(`Current customFieldsMap: ${JSON.stringify(Array.from(customFieldsMap.entries()))}`);
         
-        // Update the issue - pass fields directly to Jira
+        // Prepare the fields object for the Jira API
+        const jiraFields: Record<string, any> = {};
+        const fieldMappings: Record<string, string> = {}; // To track field name to ID mappings
+        
+        // Process each field
+        for (const [key, value] of Object.entries(fields)) {
+          // First check if we have a mapping for this field name
+          if (customFieldsMap.has(key)) {
+            const fieldId = customFieldsMap.get(key)!;
+            jiraFields[fieldId] = value;
+            fieldMappings[key] = fieldId; // Track the mapping
+            console.error(`Mapped field name "${key}" to ID "${fieldId}"`);
+          }
+          // If it's already a field ID or we don't have a mapping, use it directly
+          else {
+            jiraFields[key] = value;
+            fieldMappings[key] = key; // No mapping needed
+            console.error(`Using field key directly: "${key}"`);
+          }
+        }
+        
+        // Log the fields being updated
+        console.error(`Updating issue ${issueKey} with fields: ${JSON.stringify(jiraFields)}`);
+        
+        // Update the issue
         await jira.issues.editIssue({
           issueIdOrKey: issueKey,
-          fields: fields
+          fields: jiraFields
         });
         
-        // Get the list of field keys that were updated
-        const updatedFieldKeys = Object.keys(fields);
+        // Format the field mappings for the response
+        const fieldTexts = Object.entries(fieldMappings).map(([name, id]) => {
+          return name === id ? name : `${name} (${id})`;
+        });
         
-        const fieldsText = updatedFieldKeys.length > 0
-          ? updatedFieldKeys.join(', ')
+        const fieldsText = fieldTexts.length > 0
+          ? fieldTexts.join(', ')
           : 'No fields were updated';
         
         return {
