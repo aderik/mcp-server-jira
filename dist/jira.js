@@ -781,69 +781,33 @@ ${formattedComments}
         case "update-issue": {
             const { issueKey, fields } = args;
             try {
-                // Prepare the fields object for the Jira API
-                const jiraFields = {};
-                // Process standard fields
-                if (fields.summary !== undefined) {
-                    jiraFields.summary = fields.summary;
-                }
+                // Check if description is included - it should be handled by the separate update-description method
                 if (fields.description !== undefined) {
-                    jiraFields.description = {
-                        type: "doc",
-                        version: 1,
-                        content: [
-                            {
-                                type: "paragraph",
-                                content: [
-                                    {
-                                        type: "text",
-                                        text: fields.description
-                                    }
-                                ]
-                            }
-                        ]
+                    return {
+                        content: [{
+                                type: "text",
+                                text: "Error: The 'description' field cannot be updated using this method. Please use the 'update-description' method instead."
+                            }],
+                        isError: true,
+                        _meta: {}
                     };
                 }
-                // Process custom fields
-                for (const [fieldName, fieldId] of customFieldsMap.entries()) {
-                    if (fields[fieldName] !== undefined) {
-                        jiraFields[fieldId] = fields[fieldName];
-                    }
-                }
                 // Log the fields being updated
-                console.error(`Updating issue ${issueKey} with fields: ${JSON.stringify(jiraFields)}`);
-                // Update the issue
+                console.error(`Updating issue ${issueKey} with fields: ${JSON.stringify(fields)}`);
+                // Update the issue - pass fields directly to Jira
                 await jira.issues.editIssue({
                     issueIdOrKey: issueKey,
-                    fields: jiraFields
+                    fields: fields
                 });
-                // Get the list of updated field names for the response
-                const updatedFieldNames = [];
-                // Add standard fields
-                for (const key of Object.keys(jiraFields)) {
-                    if (!key.startsWith('customfield_')) {
-                        updatedFieldNames.push(key);
-                    }
-                }
-                // Add custom fields by name if we know them
-                for (const [fieldName, fieldId] of customFieldsMap.entries()) {
-                    if (jiraFields[fieldId] !== undefined) {
-                        updatedFieldNames.push(fieldName);
-                    }
-                }
-                // Add custom fields by ID if we don't know their names
-                for (const key of Object.keys(jiraFields)) {
-                    if (key.startsWith('customfield_') && !Array.from(customFieldsMap.values()).includes(key)) {
-                        updatedFieldNames.push(key);
-                    }
-                }
-                const fieldsText = updatedFieldNames.length > 0
-                    ? updatedFieldNames.join(', ')
+                // Get the list of field keys that were updated
+                const updatedFieldKeys = Object.keys(fields);
+                const fieldsText = updatedFieldKeys.length > 0
+                    ? updatedFieldKeys.join(', ')
                     : 'No fields were updated';
                 return {
                     content: [{
                             type: "text",
-                            text: `Successfully updated issue ${issueKey}. Updated fields: ${fieldsText}`
+                            text: `Request sent to Jira to update issue ${issueKey}. Fields in request: ${fieldsText}`
                         }],
                     _meta: {}
                 };
