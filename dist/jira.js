@@ -431,7 +431,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         case "get-ticket-details": {
             const { issueKey } = args;
             // Standard fields to fetch
-            const standardFields = ['summary', 'status', 'assignee', 'description', 'created', 'updated', 'issuelinks', 'comment', 'parent', 'issuetype', 'subtasks'];
+            const standardFields = ['summary', 'status', 'assignee', 'description', 'created', 'updated', 'issuelinks', 'comment', 'parent', 'issuetype', 'subtasks', 'labels'];
             // Add custom fields to the fields list
             const fieldsToFetch = [...standardFields, ...Array.from(customFieldsMap.values())];
             const issue = await jira.issues.getIssue({
@@ -495,6 +495,7 @@ Title: ${issue.fields.summary || 'No summary'}
 Type: ${issue.fields.issuetype?.name || 'Unknown type'}
 Status: ${issue.fields.status?.name || 'No status'}
 Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}
+Labels: ${Array.isArray(issue.fields.labels) && issue.fields.labels.length > 0 ? issue.fields.labels.join(', ') : 'No labels'}
 Parent: ${issue.fields.parent ? `${issue.fields.parent.key} (${issue.fields.parent.fields?.issuetype?.name || 'Unknown type'}) - ${issue.fields.parent.fields?.summary || 'No summary'}` : 'No parent'}
 Description:
 ${description}
