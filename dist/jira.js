@@ -89,10 +89,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
         {
             name: "search-issues",
-            description: "Search for issues with optional filters for project, issue type, and status category",
+            description: "Search for issues with optional filters for project, issue type, and status category, or using a custom JQL query",
             inputSchema: {
                 type: "object",
                 properties: {
+                    jql: {
+                        type: "string",
+                        description: "Optional custom JQL query. If provided, other filter parameters will be ignored"
+                    },
                     projectKey: {
                         type: "string",
                         description: "Optional project key to filter issues by project"
@@ -303,7 +307,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
     switch (name) {
         case "search-issues": {
-            const { projectKey, issueType, statusCategory, maxResults = 20, startAt = 0 } = args;
+            const { jql: customJql, projectKey, issueType, statusCategory, maxResults = 20, startAt = 0 } = args;
             // Validate maxResults (must be between 1 and 100)
             const validatedMaxResults = Math.min(Math.max(1, maxResults), 100);
             if (validatedMaxResults !== maxResults) {
@@ -314,33 +318,42 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             if (validatedStartAt !== startAt) {
                 console.error(`Adjusted startAt from ${startAt} to ${validatedStartAt} (must be non-negative)`);
             }
-            // Build JQL query based on provided filters
-            let jqlParts = [];
-            if (projectKey) {
-                jqlParts.push(`project = ${projectKey}`);
+            // Use custom JQL if provided, otherwise build from filters
+            let jql;
+            if (customJql) {
+                // Use the custom JQL query directly
+                jql = customJql;
+                console.error(`Using custom JQL query: ${jql}`);
             }
-            if (issueType) {
-                jqlParts.push(`issuetype = "${issueType}"`);
-            }
-            if (statusCategory) {
-                // Validate status category is one of the allowed values
-                const validStatusCategories = ['To Do', 'In Progress', 'Done'];
-                if (!validStatusCategories.includes(statusCategory)) {
-                    return {
-                        content: [{
-                                type: "text",
-                                text: `Error: statusCategory must be one of: ${validStatusCategories.join(', ')}`
-                            }],
-                        isError: true,
-                        _meta: {}
-                    };
+            else {
+                // Build JQL query based on provided filters
+                let jqlParts = [];
+                if (projectKey) {
+                    jqlParts.push(`project = ${projectKey}`);
                 }
-                jqlParts.push(`statusCategory = "${statusCategory}"`);
+                if (issueType) {
+                    jqlParts.push(`issuetype = "${issueType}"`);
+                }
+                if (statusCategory) {
+                    // Validate status category is one of the allowed values
+                    const validStatusCategories = ['To Do', 'In Progress', 'Done'];
+                    if (!validStatusCategories.includes(statusCategory)) {
+                        return {
+                            content: [{
+                                    type: "text",
+                                    text: `Error: statusCategory must be one of: ${validStatusCategories.join(', ')}`
+                                }],
+                            isError: true,
+                            _meta: {}
+                        };
+                    }
+                    jqlParts.push(`statusCategory = "${statusCategory}"`);
+                }
+                // Default ordering by updated date if no filters provided
+                jql = jqlParts.length > 0
+                    ? `${jqlParts.join(' AND ')} ORDER BY updated DESC`
+                    : 'ORDER BY updated DESC';
             }
-            // Default ordering by updated date if no filters provided
-            const jql = jqlParts.length > 0
-                ? `${jqlParts.join(' AND ')} ORDER BY updated DESC`
-                : 'ORDER BY updated DESC';
             console.error(`Executing JQL query: ${jql}`);
             try {
                 const issues = await jira.issueSearch.searchForIssuesUsingJql({
