@@ -264,6 +264,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     }
                 }
             }
+        },
+        {
+            name: "transition-issues",
+            description: "Transition multiple issues to a new status using a transition ID",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    issueKeys: {
+                        type: "array",
+                        items: { type: "string" },
+                        description: "List of issue keys to transition"
+                    },
+                    transitionId: {
+                        type: "string",
+                        description: "The ID of the transition to perform (e.g., '5' or 'Resolve Issue')"
+                    }
+                },
+                required: ["issueKeys", "transitionId"]
+            }
         }
     ]
 }));
@@ -1021,15 +1040,38 @@ ${formattedComments}
                         errors.push(`${issueKey}: ${error.message}`);
                     }
                 }
-                // Prepare response
+                // Prepare a more concise response
                 let responseText = '';
                 if (results.length > 0) {
-                    responseText += `Successfully processed ${results.length} of ${issueKeys.length} issues:\n`;
-                    responseText += results.join('\n');
+                    // Group successful issues by the labels that were added
+                    const labelGroups = new Map();
+                    for (const result of results) {
+                        const match = result.match(/^(.*?): Successfully added labels \[(.*?)\]$/);
+                        if (match) {
+                            const [_, issueKey, labelsList] = match;
+                            if (!labelGroups.has(labelsList)) {
+                                labelGroups.set(labelsList, []);
+                            }
+                            labelGroups.get(labelsList).push(issueKey);
+                        }
+                    }
+                    responseText += `Successfully added labels to ${results.length} of ${issueKeys.length} issues:\n`;
+                    // Output each group
+                    for (const [labels, issues] of labelGroups.entries()) {
+                        const issueCount = issues.length;
+                        // If there are many issues, just show the count and first few
+                        if (issueCount > 5) {
+                            responseText += `- Added [${labels}] to ${issueCount} issues (${issues.slice(0, 3).join(', ')}...)\n`;
+                        }
+                        else {
+                            responseText += `- Added [${labels}] to: ${issues.join(', ')}\n`;
+                        }
+                    }
                 }
+                // Always show detailed errors since they're important for troubleshooting
                 if (errors.length > 0) {
                     if (responseText)
-                        responseText += '\n\n';
+                        responseText += '\n';
                     responseText += `Failed to process ${errors.length} issues:\n`;
                     responseText += errors.join('\n');
                 }
@@ -1053,6 +1095,65 @@ ${formattedComments}
                     _meta: {}
                 };
             }
+        }
+        case "transition-issues": {
+            const { issueKeys, transitionId } = args;
+            if (!Array.isArray(issueKeys) || issueKeys.length === 0) {
+                return {
+                    content: [{
+                            type: "text",
+                            text: "Error: issueKeys must be a non-empty array of issue keys"
+                        }],
+                    isError: true,
+                    _meta: {}
+                };
+            }
+            if (!transitionId || typeof transitionId !== 'string') {
+                return {
+                    content: [{
+                            type: "text",
+                            text: "Error: transitionId must be a non-empty string"
+                        }],
+                    isError: true,
+                    _meta: {}
+                };
+            }
+            const results = [];
+            const errors = [];
+            for (const issueKey of issueKeys) {
+                try {
+                    await jira.issues.doTransition({
+                        issueIdOrKey: issueKey,
+                        transition: {
+                            id: transitionId
+                        }
+                    });
+                    results.push(`${issueKey}: Successfully transitioned using ID ${transitionId}`);
+                }
+                catch (error) {
+                    console.error(`Error transitioning issue ${issueKey}: ${error.message}`);
+                    errors.push(`${issueKey}: ${error.message}`);
+                }
+            }
+            let responseText = '';
+            if (results.length > 0) {
+                responseText += `Successfully transitioned ${results.length} of ${issueKeys.length} issues:\n`;
+                responseText += results.join('\n');
+            }
+            if (errors.length > 0) {
+                if (responseText)
+                    responseText += '\n\n';
+                responseText += `Failed to transition ${errors.length} issues:\n`;
+                responseText += errors.join('\n');
+            }
+            return {
+                content: [{
+                        type: "text",
+                        text: responseText || "No issues processed."
+                    }],
+                isError: errors.length === issueKeys.length,
+                _meta: {}
+            };
         }
         default:
             throw new Error(`Unknown tool: ${name}`);
