@@ -311,6 +311,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ["issueKey"]
       }
+    },
+    {
+      name: "assign-issue",
+      description: "Assign an issue to a user by their display name.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          issueKeys: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of issue keys to assign (e.g., ['EDU-123', 'EDU-124'])."
+          },
+          assigneeDisplayName: {
+            type: "string",
+            description: "The display name of the user to assign the issues to (e.g., 'John Doe')."
+          }
+        },
+        required: ["issueKeys", "assigneeDisplayName"]
+      }
     }
   ]
 }));
@@ -1407,6 +1426,105 @@ ${formattedComments}
             type: "text",
             text: `Error listing transitions for ${issueKey}: ${error.message}`
           }],
+          isError: true,
+          _meta: {}
+        };
+      }
+    }
+
+    case "assign-issue": {
+      const { issueKeys, assigneeDisplayName } = args as {
+        issueKeys: string[];
+        assigneeDisplayName: string;
+      };
+
+      if (!Array.isArray(issueKeys) || issueKeys.length === 0) {
+        return {
+          content: [{ type: "text", text: "Error: issueKeys must be a non-empty array of issue keys." }],
+          isError: true,
+          _meta: {}
+        };
+      }
+      if (!assigneeDisplayName || typeof assigneeDisplayName !== 'string') {
+        return {
+          content: [{ type: "text", text: "Error: assigneeDisplayName must be a non-empty string." }],
+          isError: true,
+          _meta: {}
+        };
+      }
+
+      try {
+        // Find user by display name
+        const usersFound = await jira.userSearch.findUsers({ query: assigneeDisplayName });
+
+        if (!usersFound || usersFound.length === 0) {
+          return {
+            content: [{ type: "text", text: `Error: No user found with display name "${assigneeDisplayName}".` }],
+            isError: true,
+            _meta: {}
+          };
+        }
+
+        if (usersFound.length > 1) {
+          const matchingUsers = usersFound.map(u => `${u.displayName} (AccountId: ${u.accountId})`).join('\n - ');
+          return {
+            content: [{ type: "text", text: `Error: Multiple users found with display name "${assigneeDisplayName}":\n - ${matchingUsers}\nPlease be more specific or use the accountId.` }],
+            isError: true,
+            _meta: {}
+          };
+        }
+
+        const userToAssign = usersFound[0];
+        if (!userToAssign.accountId) {
+            return {
+                content: [{ type: "text", text: `Error: User "${userToAssign.displayName}" does not have an accountId.` }],
+                isError: true,
+                _meta: {}
+            };
+        }
+        
+        const results = [];
+        const errors = [];
+
+        for (const issueKey of issueKeys) {
+          try {
+            await jira.issues.assignIssue({
+              issueIdOrKey: issueKey,
+              accountId: userToAssign.accountId,
+            });
+            results.push(`${issueKey}: Successfully assigned to ${userToAssign.displayName}`);
+          } catch (error: any) {
+            console.error(`Error assigning issue ${issueKey} to "${assigneeDisplayName}": ${error.message}`);
+            errors.push(`${issueKey}: ${error.message}`);
+          }
+        }
+
+        let responseText = '';
+        if (results.length > 0) {
+          responseText += `Successfully assigned ${results.length} of ${issueKeys.length} issues to ${userToAssign.displayName}:\n`;
+          responseText += results.join('\n');
+        }
+
+        if (errors.length > 0) {
+          if (responseText) responseText += '\n\n';
+          responseText += `Failed to assign ${errors.length} issues:\n`;
+          responseText += errors.join('\n');
+        }
+
+        return {
+          content: [{ type: "text", text: responseText || "No issues processed." }],
+          isError: errors.length === issueKeys.length,
+          _meta: {}
+        };
+
+      } catch (error: any) {
+        // Catch errors from user search itself
+        console.error(`Error during assignment process for display name "${assigneeDisplayName}": ${error.message}`);
+        if (error.response) {
+          console.error(`Response data: ${JSON.stringify(error.response.data)}`);
+        }
+        return {
+          content: [{ type: "text", text: `Error assigning issues: ${error.message}` }],
           isError: true,
           _meta: {}
         };
