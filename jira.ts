@@ -138,6 +138,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       }
     },
     {
+      name: "add-labels",
+      description: "Add labels to multiple issues without replacing existing ones",
+      inputSchema: {
+        type: "object",
+        properties: {
+          issueKeys: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of issue keys to add labels to"
+          },
+          labels: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of labels to add to the issues"
+          }
+        },
+        required: ["issueKeys", "labels"]
+      }
+    },
+    {
       name: "link-tickets",
       description: "Link two tickets with a 'relates to' relationship",
       inputSchema: {
@@ -1101,6 +1121,133 @@ ${formattedComments}
           content: [{
             type: "text",
             text: `Error listing issue fields: ${error.message}`
+          }],
+          isError: true,
+          _meta: {}
+        };
+      }
+    }
+
+    case "add-labels": {
+      const { issueKeys, labels } = args as {
+        issueKeys: string[];
+        labels: string[];
+      };
+
+      if (!Array.isArray(issueKeys) || issueKeys.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: "Error: issueKeys must be a non-empty array of issue keys"
+          }],
+          isError: true,
+          _meta: {}
+        };
+      }
+
+      if (!Array.isArray(labels) || labels.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: "Error: labels must be a non-empty array of label strings"
+          }],
+          isError: true,
+          _meta: {}
+        };
+      }
+
+      try {
+        const results = [];
+        const errors = [];
+
+        // Process each issue
+        for (const issueKey of issueKeys) {
+          try {
+            console.error(`Processing issue ${issueKey}`);
+            
+            // Get current issue data to retrieve existing labels
+            const issue = await jira.issues.getIssue({
+              issueIdOrKey: issueKey,
+              fields: ['labels']
+            });
+
+            // Get existing labels (or empty array if none)
+            const existingLabels = Array.isArray(issue.fields.labels) ? issue.fields.labels : [];
+            console.error(`Existing labels for ${issueKey}: ${existingLabels.join(', ') || 'none'}`);
+            
+            // Combine existing and new labels, removing duplicates
+            const combinedLabels = [...new Set([...existingLabels, ...labels])];
+            console.error(`Combined labels for ${issueKey}: ${combinedLabels.join(', ')}`);
+            
+            // Update the issue with the combined labels
+            await jira.issues.editIssue({
+              issueIdOrKey: issueKey,
+              fields: {
+                labels: combinedLabels
+              }
+            });
+            
+            results.push(`${issueKey}: Successfully added labels [${labels.join(', ')}]`);
+          } catch (error: any) {
+            console.error(`Error processing issue ${issueKey}: ${error.message}`);
+            errors.push(`${issueKey}: ${error.message}`);
+          }
+        }
+
+        // Prepare a more concise response
+        let responseText = '';
+        
+        if (results.length > 0) {
+          // Group successful issues by the labels that were added
+          const labelGroups = new Map<string, string[]>();
+          
+          for (const result of results) {
+            const match = result.match(/^(.*?): Successfully added labels \[(.*?)\]$/);
+            if (match) {
+              const [_, issueKey, labelsList] = match;
+              if (!labelGroups.has(labelsList)) {
+                labelGroups.set(labelsList, []);
+              }
+              labelGroups.get(labelsList)!.push(issueKey);
+            }
+          }
+          
+          responseText += `Successfully added labels to ${results.length} of ${issueKeys.length} issues:\n`;
+          
+          // Output each group
+          for (const [labels, issues] of labelGroups.entries()) {
+            const issueCount = issues.length;
+            // If there are many issues, just show the count and first few
+            if (issueCount > 5) {
+              responseText += `- Added [${labels}] to ${issueCount} issues (${issues.slice(0, 3).join(', ')}...)\n`;
+            } else {
+              responseText += `- Added [${labels}] to: ${issues.join(', ')}\n`;
+            }
+          }
+        }
+        
+        // Always show detailed errors since they're important for troubleshooting
+        if (errors.length > 0) {
+          if (responseText) responseText += '\n';
+          responseText += `Failed to process ${errors.length} issues:\n`;
+          responseText += errors.join('\n');
+        }
+
+        return {
+          content: [{
+            type: "text",
+            text: responseText
+          }],
+          isError: errors.length === issueKeys.length, // Only mark as error if all issues failed
+          _meta: {}
+        };
+      } catch (error: any) {
+        console.error(`Error adding labels: ${error.message}`);
+        
+        return {
+          content: [{
+            type: "text",
+            text: `Error adding labels: ${error.message}`
           }],
           isError: true,
           _meta: {}
