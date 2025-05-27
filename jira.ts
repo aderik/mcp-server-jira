@@ -1025,34 +1025,73 @@ ${formattedComments}
         // Log the current custom field mappings for debugging
         console.error(`Current customFieldsMap: ${JSON.stringify(Array.from(customFieldsMap.entries()))}`);
         
-        // Prepare the fields object for the Jira API
-        const jiraFields: Record<string, any> = {};
+        // Prepare the fields object, starting with a copy of the input.
+        const processedFields: Record<string, any> = { ...fields };
         const fieldMappings: Record<string, string> = {}; // To track field name to ID mappings
-        
-        // Process each field
-        for (const [key, value] of Object.entries(fields)) {
-          // First check if we have a mapping for this field name
+
+        // Handle assignee conversion if provided by name
+        if (processedFields.assignee && typeof processedFields.assignee === 'object' && processedFields.assignee.name && !processedFields.assignee.accountId) {
+          const assigneeDisplayName = processedFields.assignee.name;
+          console.error(`Attempting to resolve assignee by display name: "${assigneeDisplayName}" for update-issue`);
+          try {
+            const usersFound = await jira.userSearch.findUsers({ query: assigneeDisplayName });
+            if (!usersFound || usersFound.length === 0) {
+              return {
+                content: [{ type: "text", text: `Error: Assignee lookup failed. No user found with display name "${assigneeDisplayName}".` }],
+                isError: true, _meta: {}
+              };
+            }
+            if (usersFound.length > 1) {
+              const matchingUsers = usersFound.map(u => `${u.displayName} (AccountId: ${u.accountId})`).join('\n - ');
+              return {
+                content: [{ type: "text", text: `Error: Assignee lookup failed. Multiple users found with display name "${assigneeDisplayName}":\n - ${matchingUsers}\nPlease use accountId for assignee.` }],
+                isError: true, _meta: {}
+              };
+            }
+            const userToAssign = usersFound[0];
+            if (!userToAssign.accountId) {
+              return {
+                content: [{ type: "text", text: `Error: Assignee lookup failed. User "${userToAssign.displayName}" does not have an accountId.` }],
+                isError: true, _meta: {}
+              };
+            }
+            processedFields.assignee = { accountId: userToAssign.accountId }; // Replace with accountId object
+            console.error(`Successfully resolved assignee "${assigneeDisplayName}" to accountId "${userToAssign.accountId}" for update-issue`);
+          } catch (userSearchError: any) {
+            console.error(`Error during assignee lookup for "${assigneeDisplayName}" in update-issue: ${userSearchError.message}`);
+            return {
+              content: [{ type: "text", text: `Error during assignee lookup: ${userSearchError.message}` }],
+              isError: true, _meta: {}
+            };
+          }
+        } else if (processedFields.assignee && typeof processedFields.assignee === 'object' && processedFields.assignee.name && processedFields.assignee.accountId) {
+          // If both name and accountId are provided for assignee, prefer accountId and remove name.
+          console.warn(`Assignee provided with both name and accountId in update-issue. Using accountId: "${processedFields.assignee.accountId}" and removing name field.`);
+          delete processedFields.assignee.name;
+        }
+
+        // Now, map custom field names to IDs for all fields in processedFields
+        const finalJiraFields: Record<string, any> = {};
+        for (const [key, value] of Object.entries(processedFields)) {
           if (customFieldsMap.has(key)) {
             const fieldId = customFieldsMap.get(key)!;
-            jiraFields[fieldId] = value;
-            fieldMappings[key] = fieldId; // Track the mapping
-            console.error(`Mapped field name "${key}" to ID "${fieldId}"`);
-          }
-          // If it's already a field ID or we don't have a mapping, use it directly
-          else {
-            jiraFields[key] = value;
-            fieldMappings[key] = key; // No mapping needed
-            console.error(`Using field key directly: "${key}"`);
+            finalJiraFields[fieldId] = value;
+            fieldMappings[key] = fieldId;
+            console.error(`Mapped field name "${key}" to ID "${fieldId}" in update-issue`);
+          } else {
+            finalJiraFields[key] = value; // Use key directly if not a custom field name or already an ID (like 'assignee')
+            fieldMappings[key] = key;
+            console.error(`Using field key directly: "${key}" in update-issue`);
           }
         }
         
         // Log the fields being updated
-        console.error(`Updating issue ${issueKey} with fields: ${JSON.stringify(jiraFields)}`);
+        console.error(`Updating issue ${issueKey} with final fields: ${JSON.stringify(finalJiraFields)}`);
         
         // Update the issue
         await jira.issues.editIssue({
           issueIdOrKey: issueKey,
-          fields: jiraFields
+          fields: finalJiraFields
         });
         
         // Format the field mappings for the response
