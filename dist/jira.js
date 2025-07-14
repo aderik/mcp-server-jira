@@ -313,6 +313,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                 },
                 required: ["issueKeys", "assigneeDisplayName"]
             }
+        },
+        {
+            name: "list-jira-filters",
+            description: "List all Jira filters.",
+            inputSchema: {
+                type: "object",
+                properties: {} // No input parameters for now
+            }
         }
     ]
 }));
@@ -1367,6 +1375,46 @@ ${formattedComments}
             }
         }
         default:
+        case "list-jira-filters":
+            {
+                try {
+                    let allFilters = [];
+                    let startAt = 0;
+                    let isLast = false;
+                    const maxResults = 50; // Jira's typical page size
+                    while (!isLast) {
+                        const filtersResponse = await jira.filters.getFiltersPaginated({
+                            expand: 'jql', // Ensure JQL is included
+                            startAt,
+                            maxResults
+                        });
+                        if (filtersResponse.values && filtersResponse.values.length > 0) {
+                            allFilters = allFilters.concat(filtersResponse.values);
+                        }
+                        isLast = filtersResponse.isLast ?? true; // Assume last if property is missing
+                        if (!isLast) {
+                            startAt += filtersResponse.values?.length || maxResults; // Increment startAt
+                        }
+                        // Safety break if no values are returned, or if isLast is not properly set by API
+                        if (!filtersResponse.values || filtersResponse.values.length < maxResults) {
+                            isLast = true;
+                        }
+                    }
+                    if (allFilters.length === 0) {
+                        return { content: [{ type: "text", text: "No filters found." }], _meta: {} };
+                    }
+                    const formattedFilters = allFilters.map((filter) => `ID: ${filter.id}\nName: ${filter.name}\nJQL: ${filter.jql || 'JQL not available'}\nView URL: ${filter.viewUrl}`).join('\n\n---\n\n');
+                    return { content: [{ type: "text", text: `Total filters found: ${allFilters.length}\n\n${formattedFilters}` }], _meta: {} };
+                }
+                catch (error) {
+                    console.error(`Error fetching Jira filters: ${error.message}`, error);
+                    return {
+                        content: [{ type: "text", text: `Error fetching Jira filters: ${error.message}` }],
+                        isError: true,
+                        _meta: {}
+                    };
+                }
+            }
             throw new Error(`Unknown tool: ${name}`);
     }
 });
