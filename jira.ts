@@ -88,14 +88,47 @@ const server = new Server(
   { capabilities: { tools: {}, resources: {} } }
 );
 
-// Simple update-issue schema
+// Enhanced update-issue schema with detailed field value documentation
 const updateIssueSchema = {
   type: "object",
   properties: {
     issueKey: { type: "string" },
     fields: {
       type: "object",
-      description: "Object containing field names and their new values. Can include both standard fields (summary, description) and custom fields."
+      description: "Object containing field names and their new values. Can include both standard fields (summary, description) and custom fields. For user fields (like assignee, refiners), use objects with accountId: {\"accountId\": \"user-account-id\"}. For arrays of users, use [{\"accountId\": \"id1\"}, {\"accountId\": \"id2\"}]. For option fields, use {\"value\": \"option-name\"} or {\"id\": \"option-id\"}.",
+      additionalProperties: {
+        oneOf: [
+          { type: "string", description: "Simple text value" },
+          { type: "number", description: "Numeric value" },
+          { type: "boolean", description: "Boolean value" },
+          {
+            type: "object",
+            description: "Complex field value",
+            examples: [
+              { "accountId": "628b83c6c65b72006960dafc" },
+              { "value": "High" },
+              { "id": "10001" }
+            ]
+          },
+          {
+            type: "array",
+            description: "Array of values (e.g., multiple users, labels)",
+            items: {
+              oneOf: [
+                { type: "string" },
+                {
+                  type: "object",
+                  description: "User reference",
+                  properties: {
+                    accountId: { type: "string", description: "Jira user account ID" }
+                  },
+                  required: ["accountId"]
+                }
+              ]
+            }
+          }
+        ]
+      }
     }
   },
   required: ["issueKey", "fields"]
@@ -266,7 +299,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "update-issue",
-      description: "Update fields of a specific ticket, including custom fields",
+      description: "Update fields of a specific ticket, including custom fields. For user fields (assignee, refiners, etc.), use {\"accountId\": \"user-account-id\"} format. For arrays of users, use [{\"accountId\": \"id1\"}, {\"accountId\": \"id2\"}]. Use the list-users tool to find account IDs.",
       inputSchema: updateIssueSchema
     },
     {
@@ -337,6 +370,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {} // No input parameters for now
+      }
+    },
+    {
+      name: "list-users",
+      description: "List all users in Jira with their account ID, email, and display name",
+      inputSchema: {
+        type: "object",
+        properties: {
+          maxResults: {
+            type: "number",
+            description: "Optional maximum number of results to return (default: 50, max: 1000)"
+          }
+        }
       }
     }
   ]
@@ -1578,53 +1624,95 @@ ${formattedComments}
       }
     }
 
-    default:
-case "list-jira-filters": {
-        try {
-          let allFilters: Version3Models.FilterDetails[] = [];
-          let startAt = 0;
-          let isLast = false;
-          const maxResults = 50; // Jira's typical page size
-
-          while (!isLast) {
-            const filtersResponse = await jira.filters.getFiltersPaginated({
-              expand: 'jql', // Ensure JQL is included
-              startAt,
-              maxResults
-            });
-
-            if (filtersResponse.values && filtersResponse.values.length > 0) {
-              allFilters = allFilters.concat(filtersResponse.values);
-            }
-
-            isLast = filtersResponse.isLast ?? true; // Assume last if property is missing
-            if (!isLast) {
-              startAt += filtersResponse.values?.length || maxResults; // Increment startAt
-            }
-             // Safety break if no values are returned, or if isLast is not properly set by API
-            if (!filtersResponse.values || filtersResponse.values.length < maxResults) {
-                isLast = true;
-            }
-          }
-
-          if (allFilters.length === 0) {
-            return { content: [{ type: "text", text: "No filters found." }], _meta: {} };
-          }
-
-          const formattedFilters = allFilters.map((filter: Version3Models.FilterDetails) =>
-            `ID: ${filter.id}\nName: ${filter.name}\nJQL: ${filter.jql || 'JQL not available'}\nView URL: ${filter.viewUrl}`
-          ).join('\n\n---\n\n');
-
-          return { content: [{ type: "text", text: `Total filters found: ${allFilters.length}\n\n${formattedFilters}` }], _meta: {} };
-        } catch (error: any) {
-          console.error(`Error fetching Jira filters: ${error.message}`, error);
-          return {
-            content: [{ type: "text", text: `Error fetching Jira filters: ${error.message}` }],
-            isError: true,
-            _meta: {}
-          };
+    case "list-users": {
+      const { maxResults = 50 } = args as { maxResults?: number };
+      
+      // Validate maxResults (must be between 1 and 1000)
+      const validatedMaxResults = Math.min(Math.max(1, maxResults), 1000);
+      
+      try {
+        const usersResponse = await jira.users.getAllUsers({
+          maxResults: validatedMaxResults
+        });
+        
+        if (!usersResponse || usersResponse.length === 0) {
+          return { content: [{ type: "text", text: "No users found." }], _meta: {} };
         }
+        
+        // Filter for active users with 'atlassian' account type (regular human users)
+        const filteredUsers = usersResponse.filter(user => {
+          return user.active && user.accountType === 'atlassian';
+        });
+        
+        const formattedUsers = filteredUsers.map(user =>
+          `Account ID: ${user.accountId}\nDisplay Name: ${user.displayName || 'N/A'}\nEmail: ${user.emailAddress || 'N/A'}`
+        ).join('\n\n---\n\n');
+        
+        return {
+          content: [{
+            type: "text",
+            text: `Active Atlassian users found: ${filteredUsers.length} (filtered from ${usersResponse.length} total)\n\n${formattedUsers}`
+          }],
+          _meta: {}
+        };
+      } catch (error: any) {
+        console.error(`Error fetching users: ${error.message}`);
+        return {
+          content: [{ type: "text", text: `Error fetching users: ${error.message}` }],
+          isError: true,
+          _meta: {}
+        };
       }
+    }
+
+    case "list-jira-filters": {
+      try {
+        let allFilters: Version3Models.FilterDetails[] = [];
+        let startAt = 0;
+        let isLast = false;
+        const maxResults = 50; // Jira's typical page size
+
+        while (!isLast) {
+          const filtersResponse = await jira.filters.getFiltersPaginated({
+            expand: 'jql', // Ensure JQL is included
+            startAt,
+            maxResults
+          });
+
+          if (filtersResponse.values && filtersResponse.values.length > 0) {
+            allFilters = allFilters.concat(filtersResponse.values);
+          }
+
+          isLast = filtersResponse.isLast ?? true; // Assume last if property is missing
+          if (!isLast) {
+            startAt += filtersResponse.values?.length || maxResults; // Increment startAt
+          }
+           // Safety break if no values are returned, or if isLast is not properly set by API
+          if (!filtersResponse.values || filtersResponse.values.length < maxResults) {
+              isLast = true;
+          }
+        }
+
+        if (allFilters.length === 0) {
+          return { content: [{ type: "text", text: "No filters found." }], _meta: {} };
+        }
+
+        const formattedFilters = allFilters.map((filter: Version3Models.FilterDetails) =>
+          `ID: ${filter.id}\nName: ${filter.name}\nJQL: ${filter.jql || 'JQL not available'}\nView URL: ${filter.viewUrl}`
+        ).join('\n\n---\n\n');
+
+        return { content: [{ type: "text", text: `Total filters found: ${allFilters.length}\n\n${formattedFilters}` }], _meta: {} };
+      } catch (error: any) {
+        console.error(`Error fetching Jira filters: ${error.message}`, error);
+        return {
+          content: [{ type: "text", text: `Error fetching Jira filters: ${error.message}` }],
+          isError: true,
+          _meta: {}
+        };
+      }
+    }
+
+    default:
       throw new Error(`Unknown tool: ${name}`);
   }
 });
