@@ -7,6 +7,7 @@ import { respond, fail, validateArray, validateString, withJiraError } from "./u
 import { listJiraFiltersDefinition, listJiraFiltersHandler } from "./tools/listJiraFilters.js";
 import { listUsersDefinition, listUsersHandler } from "./tools/listUsers.js";
 import { searchIssuesDefinition, searchIssuesHandler } from "./tools/searchIssues.js";
+import { listSprintTicketsDefinition, listSprintTicketsHandler } from "./tools/listSprintTickets.js";
 
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map<string, string>();
@@ -194,17 +195,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["sourceIssueKey", "targetIssueKey"]
       }
     },
-    {
-      name: "list-sprint-tickets",
-      description: "Get all tickets in the active sprint",
-      inputSchema: {
-        type: "object",
-        properties: {
-          projectKey: { type: "string" }
-        },
-        required: ["projectKey"]
-      }
-    },
+    listSprintTicketsDefinition,
     {
       name: "get-ticket-details",
       description: "Get detailed information about a specific ticket",
@@ -451,24 +442,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     }
     
     case "list-sprint-tickets": {
-      const { projectKey } = args as { projectKey: string };
-
-      // Search for issues in active sprints for the project
-      const jql = `project = ${projectKey} AND sprint in openSprints()`;
-      const issues = await jira.issueSearch.searchForIssuesUsingJql({
-        jql,
-        fields: ['summary', 'status', 'assignee']
-      });
-
-      return {
-        content: [{
-          type: "text",
-          text: (issues.issues || []).map((issue: Issue) =>
-            `${issue.key}: ${issue.fields.summary || 'No summary'} (${issue.fields.status?.name || 'No status'}) [Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}]`
-          ).join("\n") || 'No issues found'
-        }],
-        _meta: {}
-      };
+      return await listSprintTicketsHandler(jira, args as { projectKey: string });
     }
 
     case "get-ticket-details": {
