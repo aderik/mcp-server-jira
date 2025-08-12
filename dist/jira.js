@@ -2,10 +2,6 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Version3Client } from "jira.js";
-// Custom fields configuration - read from environment variable
-const customFields = process.env.JIRA_CUSTOM_FIELDS
-    ? process.env.JIRA_CUSTOM_FIELDS.split(',').map(field => field.trim())
-    : [];
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map();
 const jira = new Version3Client({
@@ -30,18 +26,6 @@ async function initializeCustomFields() {
             }
         }
         console.error(`Mapped ${customFieldsMap.size} custom fields automatically`);
-        // Then, log the specifically configured fields for visibility
-        if (customFields.length > 0) {
-            console.error(`Configured custom fields: ${customFields.join(', ')}`);
-            for (const fieldName of customFields) {
-                if (customFieldsMap.has(fieldName)) {
-                    console.error(`Configured field "${fieldName}" is mapped to ID "${customFieldsMap.get(fieldName)}"`);
-                }
-                else {
-                    console.error(`Warning: Configured field "${fieldName}" not found in Jira`);
-                }
-            }
-        }
     }
     catch (error) {
         console.error(`Error initializing custom fields: ${error.message}`);
@@ -70,6 +54,40 @@ function formatFieldValue(value) {
     }
     // Simple values
     return String(value);
+}
+// Determine if a field value is meaningfully set (not null/empty)
+function hasMeaningfulValue(value) {
+    if (value === null || value === undefined)
+        return false;
+    const t = typeof value;
+    if (t === 'string')
+        return value.trim().length > 0;
+    if (t === 'number' || t === 'boolean')
+        return true;
+    if (Array.isArray(value)) {
+        return value.some(item => hasMeaningfulValue(item));
+    }
+    if (t === 'object') {
+        // Consider Atlassian Document Format meaningful only if it yields non-empty text
+        if (value.type === 'doc') {
+            const text = extractTextFromADF(value).trim();
+            return text.length > 0;
+        }
+        // Common Jira shapes (option, user, named objects)
+        const candidateKeys = ['value', 'displayName', 'name', 'id', 'text'];
+        for (const key of candidateKeys) {
+            if (hasMeaningfulValue(value[key]))
+                return true;
+        }
+        // Fallback: any own property with a meaningful value
+        for (const key in value) {
+            if (Object.prototype.hasOwnProperty.call(value, key) && hasMeaningfulValue(value[key])) {
+                return true;
+            }
+        }
+        return false;
+    }
+    return false;
 }
 const server = new Server({ name: "jira-server", version: "1.0.0" }, { capabilities: { tools: {}, resources: {} } });
 // Reusable fields schema for both create and update operations
@@ -601,18 +619,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                     return `[${created}] ${author}:\n${body}`;
                 }).join('\n\n')
                 : 'No comments';
-            // Process custom fields
+            // Process custom fields - include only meaningful values
             const customFieldsData = {};
             for (const [fieldName, fieldId] of customFieldsMap.entries()) {
-                if (issue.fields[fieldId] !== undefined) {
-                    customFieldsData[fieldName] = formatFieldValue(issue.fields[fieldId]);
+                const raw = issue.fields[fieldId];
+                if (hasMeaningfulValue(raw)) {
+                    customFieldsData[fieldName] = formatFieldValue(raw);
                 }
             }
-            // Format custom fields for display
+            // Format custom fields for display (omit section if none)
             const customFieldsSection = Object.keys(customFieldsData).length > 0
                 ? `Custom Fields:
 ${Object.entries(customFieldsData).map(([name, value]) => `${name}: ${value}`).join('\n')}`
-                : 'No custom fields configured';
+                : '';
             return {
                 content: [{
                         type: "text",
