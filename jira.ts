@@ -1,3 +1,4 @@
+import { listChildIssuesDefinition, listChildIssuesHandler } from "./tools/listChildIssues.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -202,17 +203,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     getTicketDetailsDefinition,
     addCommentDefinition,
     updateDescriptionDefinition,
-    {
-      name: "list-child-issues",
-      description: "Get all child issues of a parent ticket",
-      inputSchema: {
-        type: "object",
-        properties: {
-          parentKey: { type: "string" }
-        },
-        required: ["parentKey"]
-      }
-    },
+    listChildIssuesDefinition,
     {
       name: "create-sub-ticket",
       description: "Create a sub-ticket (child issue) for a parent ticket",
@@ -426,6 +417,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
     case "update-description": {
       return await updateDescriptionHandler(jira, args as { issueKey: string; description: string });
+    }
+
+    case "list-child-issues": {
+      return await listChildIssuesHandler(jira, args as { parentKey: string });
     }
 
     case "list-child-issues": {
