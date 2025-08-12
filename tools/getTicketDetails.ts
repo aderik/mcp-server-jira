@@ -1,6 +1,7 @@
 import { Version3Client } from "jira.js";
 import type { Issue } from "jira.js/out/version3/models";
 import type { McpResponse } from "../utils.js";
+import { extractTextFromADF, formatFieldValue, hasMeaningfulValue } from "../shared/helpers.js";
 
 export const getTicketDetailsDefinition = {
   name: "get-ticket-details",
@@ -14,115 +15,6 @@ export const getTicketDetailsDefinition = {
   },
 };
 
-// Local helpers copied to avoid tight coupling with jira.ts internals
-function extractTextFromADF(node: any, depth: number = 0): string {
-  if (!node) return "No description";
-
-  const indent = "  ".repeat(depth);
-  let result = "";
-
-  if (typeof node === "string") {
-    return indent + node;
-  }
-
-  switch (node.type) {
-    case "heading":
-      result += `${indent}${node.content?.[0]?.text || ""}\n`;
-      break;
-
-    case "paragraph":
-      if (node.content) {
-        const paragraphText = node.content
-          .map((content: any) => content.text || "")
-          .join("")
-          .trim();
-        if (paragraphText) {
-          result += `${indent}${paragraphText}\n`;
-        }
-      }
-      break;
-
-    case "bulletList":
-    case "orderedList":
-      if (node.content) {
-        result += node.content.map((item: any) => extractTextFromADF(item, depth)).join("");
-      }
-      break;
-
-    case "listItem":
-      if (node.content) {
-        const itemContent = node.content
-          .map((content: any) => extractTextFromADF(content, depth + 1))
-          .join("")
-          .trim();
-        result += `${indent}• ${itemContent}\n`;
-      }
-      break;
-
-    default:
-      if (Array.isArray(node.content)) {
-        result += node.content.map((content: any) => extractTextFromADF(content, depth)).join("");
-      } else if (node.text) {
-        result += indent + node.text;
-      }
-  }
-
-  return result;
-}
-
-function formatFieldValue(value: any): string {
-  if (value === null || value === undefined) {
-    return "Not set";
-  }
-
-  if (typeof value === "object") {
-    if ((value as any).type === "doc") {
-      return extractTextFromADF(value);
-    }
-    if ((value as any).displayName) {
-      return (value as any).displayName;
-    }
-    if (Array.isArray(value)) {
-      return value.map((item) => formatFieldValue(item)).join(", ");
-    }
-    return JSON.stringify(value);
-  }
-
-  return String(value);
-}
-
-function hasMeaningfulValue(value: any): boolean {
-  if (value === null || value === undefined) return false;
-
-  const t = typeof value;
-  if (t === "string") return value.trim().length > 0;
-  if (t === "number" || t === "boolean") return true;
-
-  if (Array.isArray(value)) {
-    return value.some((item) => hasMeaningfulValue(item));
-  }
-
-  if (t === "object") {
-    if ((value as any).type === "doc") {
-      const text = extractTextFromADF(value).trim();
-      return text.length > 0;
-    }
-
-    const candidateKeys = ["value", "displayName", "name", "id", "text"];
-    for (const key of candidateKeys) {
-      if (hasMeaningfulValue((value as any)[key])) return true;
-    }
-
-    for (const key in value) {
-      if (Object.prototype.hasOwnProperty.call(value, key) && hasMeaningfulValue((value as any)[key])) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  return false;
-}
 
 export async function getTicketDetailsHandler(
   jira: Version3Client,

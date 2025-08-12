@@ -15,6 +15,6 @@
     "incremental": true,
     "tsBuildInfoFile": "./dist/.tsbuildinfo"
   },
-  "include": ["*.ts", "tools/**/*.ts"],
+  "include": ["*.ts", "tools/**/*.ts", "shared/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
