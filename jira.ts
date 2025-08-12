@@ -13,6 +13,7 @@ import { addCommentDefinition, addCommentHandler } from "./tools/addComment.js";
 import { updateDescriptionDefinition, updateDescriptionHandler } from "./tools/updateDescription.js";
 import { createSubTicketDefinition, createSubTicketHandler, createSubTicketCore } from "./tools/createSubTicket.js";
 import { createTicketDefinition, createTicketHandler } from "./tools/createTicket.js";
+import { updateIssueDefinition, updateIssueHandler } from "./tools/updateIssue.js";
 
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map<string, string>();
