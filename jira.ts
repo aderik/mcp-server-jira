@@ -16,6 +16,7 @@ import { createTicketDefinition, createTicketHandler } from "./tools/createTicke
 import { updateIssueDefinition, updateIssueHandler } from "./tools/updateIssue.js";
 import { listIssueFieldsDefinition, listIssueFieldsHandler } from "./tools/listIssueFields.js";
 import { transitionIssuesDefinition, transitionIssuesHandler } from "./tools/transitionIssues.js";
+import { listIssueTransitionsDefinition, listIssueTransitionsHandler } from "./tools/listIssueTransitions.js";
 
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map<string, string>();
@@ -230,18 +231,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["issueKeys", "transitionId"]
       }
     },
-    {
-      name: "list-issue-transitions",
-      description: "List available transitions for a specific issue.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          issueKey: { type: "string" }
-        },
-        required: ["issueKey"]
-      }
-    },
-    {
+    listIssueTransitionsDefinition,    {
       name: "assign-issue",
       description: "Assign an issue to a user by their display name.",
       inputSchema: {

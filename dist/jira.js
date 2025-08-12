@@ -15,6 +15,7 @@ import { createSubTicketDefinition, createSubTicketHandler } from "./tools/creat
 import { createTicketDefinition, createTicketHandler } from "./tools/createTicket.js";
 import { updateIssueDefinition, updateIssueHandler } from "./tools/updateIssue.js";
 import { listIssueFieldsDefinition, listIssueFieldsHandler } from "./tools/listIssueFields.js";
+import { listIssueTransitionsDefinition } from "./tools/listIssueTransitions.js";
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map();
 const { JIRA_HOST, JIRA_EMAIL, JIRA_API_TOKEN } = process.env;
@@ -209,18 +210,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                 required: ["issueKeys", "transitionId"]
             }
         },
-        {
-            name: "list-issue-transitions",
-            description: "List available transitions for a specific issue.",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    issueKey: { type: "string" }
-                },
-                required: ["issueKey"]
-            }
-        },
-        {
+        listIssueTransitionsDefinition, {
             name: "assign-issue",
             description: "Assign an issue to a user by their display name.",
             inputSchema: {
