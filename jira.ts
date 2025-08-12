@@ -10,6 +10,7 @@ import { searchIssuesDefinition, searchIssuesHandler } from "./tools/searchIssue
 import { listSprintTicketsDefinition, listSprintTicketsHandler } from "./tools/listSprintTickets.js";
 import { getTicketDetailsDefinition, getTicketDetailsHandler } from "./tools/getTicketDetails.js";
 import { addCommentDefinition, addCommentHandler } from "./tools/addComment.js";
+import { updateDescriptionDefinition, updateDescriptionHandler } from "./tools/updateDescription.js";
 
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map<string, string>();
@@ -200,18 +201,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     listSprintTicketsDefinition,
     getTicketDetailsDefinition,
     addCommentDefinition,
-    {
-      name: "update-description",
-      description: "Update the description of a specific ticket",
-      inputSchema: {
-        type: "object",
-        properties: {
-          issueKey: { type: "string" },
-          description: { type: "string" }
-        },
-        required: ["issueKey", "description"]
-      }
-    },
+    updateDescriptionDefinition,
     {
       name: "list-child-issues",
       description: "Get all child issues of a parent ticket",
@@ -435,36 +425,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     }
 
     case "update-description": {
-      const { issueKey, description } = args as { issueKey: string; description: string };
-
-      await jira.issues.editIssue({
-        issueIdOrKey: issueKey,
-        fields: {
-          description: {
-            type: "doc",
-            version: 1,
-            content: [
-              {
-                type: "paragraph",
-                content: [
-                  {
-                    type: "text",
-                    text: description
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      });
-
-      return {
-        content: [{
-          type: "text",
-          text: `Successfully updated description of ${issueKey}`
-        }],
-        _meta: {}
-      };
+      return await updateDescriptionHandler(jira, args as { issueKey: string; description: string });
     }
 
     case "list-child-issues": {
