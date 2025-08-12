@@ -15,6 +15,7 @@ import { createSubTicketDefinition, createSubTicketHandler, createSubTicketCore 
 import { createTicketDefinition, createTicketHandler } from "./tools/createTicket.js";
 import { updateIssueDefinition, updateIssueHandler } from "./tools/updateIssue.js";
 import { listIssueFieldsDefinition, listIssueFieldsHandler } from "./tools/listIssueFields.js";
+import { transitionIssuesDefinition, transitionIssuesHandler } from "./tools/transitionIssues.js";
 
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map<string, string>();
