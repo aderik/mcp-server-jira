@@ -72,50 +72,43 @@ function formatFieldValue(value) {
     return String(value);
 }
 const server = new Server({ name: "jira-server", version: "1.0.0" }, { capabilities: { tools: {}, resources: {} } });
-// Enhanced update-issue schema with detailed field value documentation
-const updateIssueSchema = {
+// Reusable fields schema for both create and update operations
+const fieldsSchema = {
     type: "object",
-    properties: {
-        issueKey: { type: "string" },
-        fields: {
-            type: "object",
-            description: "Object containing field names and their new values. Can include both standard fields (summary, description) and custom fields. For user fields (like assignee, refiners), use objects with accountId: {\"accountId\": \"user-account-id\"}. For arrays of users, use [{\"accountId\": \"id1\"}, {\"accountId\": \"id2\"}]. For option fields, use {\"value\": \"option-name\"} or {\"id\": \"option-id\"}.",
-            additionalProperties: {
-                oneOf: [
-                    { type: "string", description: "Simple text value" },
-                    { type: "number", description: "Numeric value" },
-                    { type: "boolean", description: "Boolean value" },
-                    {
-                        type: "object",
-                        description: "Complex field value",
-                        examples: [
-                            { "accountId": "628b83c6c65b72006960dafc" },
-                            { "value": "High" },
-                            { "id": "10001" }
-                        ]
-                    },
-                    {
-                        type: "array",
-                        description: "Array of values (e.g., multiple users, labels)",
-                        items: {
-                            oneOf: [
-                                { type: "string" },
-                                {
-                                    type: "object",
-                                    description: "User reference",
-                                    properties: {
-                                        accountId: { type: "string", description: "Jira user account ID" }
-                                    },
-                                    required: ["accountId"]
-                                }
-                            ]
-                        }
-                    }
+    description: "Object containing field names and their values. Can include both standard fields and custom fields. For user fields (like assignee, refiners), use objects with accountId: {\"accountId\": \"user-account-id\"}. For arrays of users, use [{\"accountId\": \"id1\"}, {\"accountId\": \"id2\"}]. For option fields, use {\"value\": \"option-name\"} or {\"id\": \"option-id\"}.",
+    additionalProperties: {
+        oneOf: [
+            { type: "string", description: "Simple text value" },
+            { type: "number", description: "Numeric value" },
+            { type: "boolean", description: "Boolean value" },
+            {
+                type: "object",
+                description: "Complex field value",
+                examples: [
+                    { "accountId": "628b83c6c65b72006960dafc" },
+                    { "value": "High" },
+                    { "id": "10001" }
                 ]
+            },
+            {
+                type: "array",
+                description: "Array of values (e.g., multiple users, labels)",
+                items: {
+                    oneOf: [
+                        { type: "string" },
+                        {
+                            type: "object",
+                            description: "User reference",
+                            properties: {
+                                accountId: { type: "string", description: "Jira user account ID" }
+                            },
+                            required: ["accountId"]
+                        }
+                    ]
+                }
             }
-        }
-    },
-    required: ["issueKey", "fields"]
+        ]
+    }
 };
 // List available tools
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -261,7 +254,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         {
             name: "create-ticket",
-            description: "Create a new ticket (regular issue or sub-task)",
+            description: "Create a new ticket (regular issue or sub-task) with optional custom fields",
             inputSchema: {
                 type: "object",
                 properties: {
@@ -275,6 +268,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     parentKey: {
                         type: "string",
                         description: "Optional parent issue key. If provided, creates a sub-task."
+                    },
+                    fields: {
+                        ...fieldsSchema,
+                        description: "Optional object containing additional field names and their values. Can include both standard fields and custom fields. For user fields (like assignee), use objects with accountId: {\"accountId\": \"user-account-id\"}. For arrays of users, use [{\"accountId\": \"id1\"}, {\"accountId\": \"id2\"}]. For option fields, use {\"value\": \"option-name\"} or {\"id\": \"option-id\"}. Note: summary, description, project, issuetype, and parent fields are handled separately and should not be included in this fields object."
                     }
                 },
                 required: ["projectKey", "summary"]
@@ -283,7 +280,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         {
             name: "update-issue",
             description: "Update fields of a specific ticket, including custom fields. For user fields (assignee, refiners, etc.), use {\"accountId\": \"user-account-id\"} format. For arrays of users, use [{\"accountId\": \"id1\"}, {\"accountId\": \"id2\"}]. Use the list-users tool to find account IDs.",
-            inputSchema: updateIssueSchema
+            inputSchema: {
+                type: "object",
+                properties: {
+                    issueKey: { type: "string" },
+                    fields: fieldsSchema
+                },
+                required: ["issueKey", "fields"]
+            }
         },
         {
             name: "list-issue-fields",
@@ -834,7 +838,7 @@ ${formattedComments}
             }
         }
         case "create-ticket": {
-            const { projectKey, summary, description = "", issueType = "Task", parentKey } = args;
+            const { projectKey, summary, description = "", issueType = "Task", parentKey, fields = {} } = args;
             try {
                 // If parentKey is provided, reuse sub-ticket creation logic
                 if (parentKey) {
@@ -864,7 +868,72 @@ ${formattedComments}
                     ? issueType
                     : (availableIssueTypes[0] || "Task");
                 console.error(`Using issue type: ${finalIssueType}`);
-                // Create the issue
+                // Process additional fields similar to update-issue
+                const processedFields = { ...fields };
+                const fieldMappings = {}; // To track field name to ID mappings
+                // Handle assignee conversion if provided by name
+                if (processedFields.assignee && typeof processedFields.assignee === 'object' && processedFields.assignee.name && !processedFields.assignee.accountId) {
+                    const assigneeDisplayName = processedFields.assignee.name;
+                    console.error(`Attempting to resolve assignee by display name: "${assigneeDisplayName}" for create-ticket`);
+                    try {
+                        const usersFound = await jira.userSearch.findUsers({ query: assigneeDisplayName });
+                        if (!usersFound || usersFound.length === 0) {
+                            return {
+                                content: [{ type: "text", text: `Error: Assignee lookup failed. No user found with display name "${assigneeDisplayName}".` }],
+                                isError: true, _meta: {}
+                            };
+                        }
+                        if (usersFound.length > 1) {
+                            const matchingUsers = usersFound.map(u => `${u.displayName} (AccountId: ${u.accountId})`).join('\n - ');
+                            return {
+                                content: [{ type: "text", text: `Error: Assignee lookup failed. Multiple users found with display name "${assigneeDisplayName}":\n - ${matchingUsers}\nPlease use accountId for assignee.` }],
+                                isError: true, _meta: {}
+                            };
+                        }
+                        const userToAssign = usersFound[0];
+                        if (!userToAssign.accountId) {
+                            return {
+                                content: [{ type: "text", text: `Error: Assignee lookup failed. User "${userToAssign.displayName}" does not have an accountId.` }],
+                                isError: true, _meta: {}
+                            };
+                        }
+                        processedFields.assignee = { accountId: userToAssign.accountId }; // Replace with accountId object
+                        console.error(`Successfully resolved assignee "${assigneeDisplayName}" to accountId "${userToAssign.accountId}" for create-ticket`);
+                    }
+                    catch (userSearchError) {
+                        console.error(`Error during assignee lookup for "${assigneeDisplayName}" in create-ticket: ${userSearchError.message}`);
+                        return {
+                            content: [{ type: "text", text: `Error during assignee lookup: ${userSearchError.message}` }],
+                            isError: true, _meta: {}
+                        };
+                    }
+                }
+                else if (processedFields.assignee && typeof processedFields.assignee === 'object' && processedFields.assignee.name && processedFields.assignee.accountId) {
+                    // If both name and accountId are provided for assignee, prefer accountId and remove name.
+                    console.warn(`Assignee provided with both name and accountId in create-ticket. Using accountId: "${processedFields.assignee.accountId}" and removing name field.`);
+                    delete processedFields.assignee.name;
+                }
+                // Map custom field names to IDs for all fields in processedFields
+                const additionalJiraFields = {};
+                for (const [key, value] of Object.entries(processedFields)) {
+                    // Skip core fields that are handled separately
+                    if (['summary', 'description', 'project', 'issuetype', 'parent'].includes(key)) {
+                        console.warn(`Skipping field "${key}" in create-ticket as it's handled separately`);
+                        continue;
+                    }
+                    if (customFieldsMap.has(key)) {
+                        const fieldId = customFieldsMap.get(key);
+                        additionalJiraFields[fieldId] = value;
+                        fieldMappings[key] = fieldId;
+                        console.error(`Mapped field name "${key}" to ID "${fieldId}" in create-ticket`);
+                    }
+                    else {
+                        additionalJiraFields[key] = value; // Use key directly if not a custom field name or already an ID
+                        fieldMappings[key] = key;
+                        console.error(`Using field key directly: "${key}" in create-ticket`);
+                    }
+                }
+                // Create the issue payload with core fields and additional fields
                 const createIssuePayload = {
                     fields: {
                         summary: summary,
@@ -888,15 +957,23 @@ ${formattedComments}
                                     ]
                                 }
                             ]
-                        } : undefined
+                        } : undefined,
+                        ...additionalJiraFields
                     }
                 };
                 console.error(`Create issue payload: ${JSON.stringify(createIssuePayload)}`);
                 const createdIssue = await jira.issues.createIssue(createIssuePayload);
+                // Format the field mappings for the response
+                const fieldTexts = Object.entries(fieldMappings).map(([name, id]) => {
+                    return name === id ? name : `${name} (${id})`;
+                });
+                const additionalFieldsText = fieldTexts.length > 0
+                    ? ` with additional fields: ${fieldTexts.join(', ')}`
+                    : '';
                 return {
                     content: [{
                             type: "text",
-                            text: `🤖 Successfully created ticket ${createdIssue.key} in project ${projectKey}`
+                            text: `🤖 Successfully created ticket ${createdIssue.key} in project ${projectKey}${additionalFieldsText}`
                         }],
                     _meta: {}
                 };
