@@ -1,5 +1,4 @@
 import { Version3Client } from "jira.js";
-import type { Issue } from "jira.js/out/version3/models";
 import type { McpResponse } from "../utils.js";
 import { extractTextFromADF, formatFieldValue, hasMeaningfulValue } from "../shared/helpers.js";
 
@@ -40,15 +39,15 @@ export async function getTicketDetailsHandler(
 
   const fieldsToFetch = [...standardFields, ...Array.from(customFieldsMap.values())];
 
-  const issue = (await jira.issues.getIssue({
+  const issue: any = await jira.issues.getIssue({
     issueIdOrKey: issueKey,
     fields: fieldsToFetch,
-  })) as Issue;
+  });
 
   const description = extractTextFromADF(issue.fields.description);
 
   const linkedIssues = (issue.fields.issuelinks || [])
-    .map((link) => {
+    .map((link: any) => {
       const relatedIssue = (link as any).inwardIssue || (link as any).outwardIssue;
       if (!relatedIssue) return null;
       return `${relatedIssue.key} ${relatedIssue.fields?.summary || "No summary"} [${relatedIssue.fields?.issuetype?.name || "Unknown type"}, ${relatedIssue.fields?.status?.name || "Unknown status"}]`;
@@ -58,7 +57,7 @@ export async function getTicketDetailsHandler(
 
   const subtasks = (issue.fields.subtasks || [])
     .map(
-      (subtask) =>
+      (subtask: any) =>
         `${subtask.key} ${subtask.fields?.summary || "No summary"} [${subtask.fields?.issuetype?.name || "Unknown type"}, ${subtask.fields?.status?.name || "Unknown status"}]`
     )
     .join("\n");

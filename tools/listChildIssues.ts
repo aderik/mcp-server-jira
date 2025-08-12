@@ -1,5 +1,4 @@
 import { Version3Client } from "jira.js";
-import type { Issue } from "jira.js/out/version3/models";
 import type { McpResponse } from "../utils.js";
 
 export const listChildIssuesDefinition = {
@@ -29,7 +28,7 @@ export async function listChildIssuesHandler(
   const text =
     (issues.issues || [])
       .map(
-        (issue: Issue) =>
+        (issue: any) =>
           `${issue.key}: ${issue.fields.summary || "No summary"} (${issue.fields.status?.name || "No status"}) [Type: ${
             issue.fields.issuetype?.name || "Unknown"
           }, Assignee: ${issue.fields.assignee?.displayName || "Unassigned"}]`

@@ -1,5 +1,4 @@
 import { Version3Client } from "jira.js";
-import type { Issue } from "jira.js/out/version3/models";
 import type { McpResponse } from "../utils.js";
 
 export const searchIssuesDefinition = {
@@ -92,7 +91,7 @@ export async function searchIssuesHandler(
       fields: ["summary", "status", "issuetype", "assignee", "updated", "statusCategory"],
     });
 
-    const formattedIssues = (issues.issues || []).map((issue: Issue) => {
+    const formattedIssues = (issues.issues || []).map((issue: any) => {
       const statusCat = issue.fields.status?.statusCategory?.name || "Unknown";
       const updated = issue.fields.updated ? new Date(issue.fields.updated).toLocaleString() : "Unknown";
       return `${issue.key}: ${issue.fields.summary || "No summary"} [${issue.fields.issuetype?.name || "Unknown type"}, ${
