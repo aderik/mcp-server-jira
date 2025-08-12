@@ -5,6 +5,7 @@ import { Version3Client } from "jira.js";
 import { respond, fail, validateArray, validateString, withJiraError } from "./utils.js";
 import { listJiraFiltersDefinition, listJiraFiltersHandler } from "./tools/listJiraFilters.js";
 import { listUsersDefinition, listUsersHandler } from "./tools/listUsers.js";
+import { searchIssuesDefinition, searchIssuesHandler } from "./tools/searchIssues.js";
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map();
 const { JIRA_HOST, JIRA_EMAIL, JIRA_API_TOKEN } = process.env;
@@ -139,39 +140,7 @@ const fieldsSchema = {
 // List available tools
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
-        {
-            name: "search-issues",
-            description: "Search for issues with optional filters for project, issue type, and status category, or using a custom JQL query",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    jql: {
-                        type: "string",
-                        description: "Optional custom JQL query. If provided, other filter parameters will be ignored"
-                    },
-                    projectKey: {
-                        type: "string",
-                        description: "Optional project key to filter issues by project"
-                    },
-                    issueType: {
-                        type: "string",
-                        description: "Optional issue type to filter issues (e.g., 'Bug', 'Task', 'Story')"
-                    },
-                    statusCategory: {
-                        type: "string",
-                        description: "Optional status category to filter issues. Must be one of: 'To Do', 'In Progress', 'Done'"
-                    },
-                    maxResults: {
-                        type: "number",
-                        description: "Optional maximum number of results to return (default: 20, max: 100)"
-                    },
-                    startAt: {
-                        type: "number",
-                        description: "Optional pagination offset, specifies the index of the first issue to return (0-based, default: 0)"
-                    }
-                }
-            }
-        },
+        searchIssuesDefinition,
         {
             name: "add-labels",
             description: "Add labels to multiple issues without replacing existing ones",
@@ -441,110 +410,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
     switch (name) {
         case "search-issues": {
-            const { jql: customJql, projectKey, issueType, statusCategory, maxResults = 20, startAt = 0 } = args;
-            // Validate maxResults (must be between 1 and 100)
-            const validatedMaxResults = Math.min(Math.max(1, maxResults), 100);
-            if (validatedMaxResults !== maxResults) {
-                console.error(`Adjusted maxResults from ${maxResults} to ${validatedMaxResults} (valid range: 1-100)`);
-            }
-            // Validate startAt (must be non-negative)
-            const validatedStartAt = Math.max(0, startAt);
-            if (validatedStartAt !== startAt) {
-                console.error(`Adjusted startAt from ${startAt} to ${validatedStartAt} (must be non-negative)`);
-            }
-            // Use custom JQL if provided, otherwise build from filters
-            let jql;
-            if (customJql) {
-                // Use the custom JQL query directly
-                jql = customJql;
-                console.error(`Using custom JQL query: ${jql}`);
-            }
-            else {
-                // Build JQL query based on provided filters
-                let jqlParts = [];
-                if (projectKey) {
-                    jqlParts.push(`project = ${projectKey}`);
-                }
-                if (issueType) {
-                    jqlParts.push(`issuetype = "${issueType}"`);
-                }
-                if (statusCategory) {
-                    // Validate status category is one of the allowed values
-                    const validStatusCategories = ['To Do', 'In Progress', 'Done'];
-                    if (!validStatusCategories.includes(statusCategory)) {
-                        return {
-                            content: [{
-                                    type: "text",
-                                    text: `Error: statusCategory must be one of: ${validStatusCategories.join(', ')}`
-                                }],
-                            isError: true,
-                            _meta: {}
-                        };
-                    }
-                    jqlParts.push(`statusCategory = "${statusCategory}"`);
-                }
-                // Default ordering by updated date if no filters provided
-                jql = jqlParts.length > 0
-                    ? `${jqlParts.join(' AND ')} ORDER BY updated DESC`
-                    : 'ORDER BY updated DESC';
-            }
-            console.error(`Executing JQL query: ${jql}`);
-            try {
-                const issues = await jira.issueSearch.searchForIssuesUsingJql({
-                    jql,
-                    maxResults: validatedMaxResults,
-                    startAt: validatedStartAt,
-                    fields: ['summary', 'status', 'issuetype', 'assignee', 'updated', 'statusCategory']
-                });
-                // Format the results
-                const formattedIssues = (issues.issues || []).map((issue) => {
-                    const statusCat = issue.fields.status?.statusCategory?.name || 'Unknown';
-                    const updated = issue.fields.updated
-                        ? new Date(issue.fields.updated).toLocaleString()
-                        : 'Unknown';
-                    return `${issue.key}: ${issue.fields.summary || 'No summary'} [${issue.fields.issuetype?.name || 'Unknown type'}, ${issue.fields.status?.name || 'No status'} (${statusCat}), Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}, Updated: ${updated}]`;
-                });
-                const totalResults = issues.total || 0;
-                const startIndex = validatedStartAt + 1;
-                const endIndex = Math.min(validatedStartAt + validatedMaxResults, totalResults);
-                // Create pagination information
-                const paginationInfo = totalResults > 0
-                    ? `Showing results ${startIndex}-${endIndex} of ${totalResults}`
-                    : `No results found`;
-                // Add pagination navigation hints if there are more results
-                let navigationHints = '';
-                if (validatedStartAt > 0) {
-                    const prevStartAt = Math.max(0, validatedStartAt - validatedMaxResults);
-                    navigationHints += `\nPrevious page: Use startAt=${prevStartAt}`;
-                }
-                if (endIndex < totalResults) {
-                    const nextStartAt = validatedStartAt + validatedMaxResults;
-                    navigationHints += `\nNext page: Use startAt=${nextStartAt}`;
-                }
-                return {
-                    content: [{
-                            type: "text",
-                            text: formattedIssues.length > 0
-                                ? `${paginationInfo}${navigationHints}\n\n${formattedIssues.join('\n')}`
-                                : 'No issues found matching the criteria'
-                        }],
-                    _meta: {}
-                };
-            }
-            catch (error) {
-                console.error(`Error searching for issues: ${error.message}`);
-                if (error.response) {
-                    console.error(`Response data: ${JSON.stringify(error.response.data)}`);
-                }
-                return {
-                    content: [{
-                            type: "text",
-                            text: `Error searching for issues: ${error.message}`
-                        }],
-                    isError: true,
-                    _meta: {}
-                };
-            }
+            return await searchIssuesHandler(jira, args);
         }
         case "list-sprint-tickets": {
             const { projectKey } = args;
