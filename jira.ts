@@ -9,6 +9,7 @@ import { listUsersDefinition, listUsersHandler } from "./tools/listUsers.js";
 import { searchIssuesDefinition, searchIssuesHandler } from "./tools/searchIssues.js";
 import { listSprintTicketsDefinition, listSprintTicketsHandler } from "./tools/listSprintTickets.js";
 import { getTicketDetailsDefinition, getTicketDetailsHandler } from "./tools/getTicketDetails.js";
+import { addCommentDefinition, addCommentHandler } from "./tools/addComment.js";
 
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map<string, string>();
@@ -198,18 +199,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     listSprintTicketsDefinition,
     getTicketDetailsDefinition,
-    {
-      name: "add-comment",
-      description: "Add a comment to a specific ticket",
-      inputSchema: {
-        type: "object",
-        properties: {
-          issueKey: { type: "string" },
-          comment: { type: "string" }
-        },
-        required: ["issueKey", "comment"]
-      }
-    },
+    addCommentDefinition,
     {
       name: "update-description",
       description: "Update the description of a specific ticket",
@@ -441,20 +431,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     }
 
     case "add-comment": {
-      const { issueKey, comment } = args as { issueKey: string; comment: string };
-
-      await jira.issueComments.addComment({
-        issueIdOrKey: issueKey,
-        comment,
-      });
-
-      return {
-        content: [{
-          type: "text",
-          text: `Successfully added comment to ${issueKey}`
-        }],
-        _meta: {}
-      };
+      return await addCommentHandler(jira, args as { issueKey: string; comment: string });
     }
 
     case "update-description": {
