@@ -208,18 +208,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     listChildIssuesDefinition,
     createSubTicketDefinition,
     createTicketDefinition,
-    {
-      name: "update-issue",
-      description: "Update fields of a specific ticket, including custom fields. For user fields (assignee, refiners, etc.), use {\"accountId\": \"user-account-id\"} format. For arrays of users, use [{\"accountId\": \"id1\"}, {\"accountId\": \"id2\"}]. Use the list-users tool to find account IDs.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          issueKey: { type: "string" },
-          fields: fieldsSchema
-        },
-        required: ["issueKey", "fields"]
-      }
-    },
+    updateIssueDefinition,
     {
       name: "list-issue-fields",
       description: "List all available issue fields in Jira, including custom fields",
@@ -482,138 +471,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     }
 
     case "update-issue": {
-      const { issueKey, fields } = args as {
-        issueKey: string;
-        fields: Record<string, any>;
-      };
-      
-      try {
-        // Check if description is included - it should be handled by the separate update-description method
-        if (fields.description !== undefined) {
-          return {
-            content: [{
-              type: "text",
-              text: "Error: The 'description' field cannot be updated using this method. Please use the 'update-description' method instead."
-            }],
-            isError: true,
-            _meta: {}
-          };
-        }
-        
-        // Log the current custom field mappings for debugging
-        console.error(`Current customFieldsMap: ${JSON.stringify(Array.from(customFieldsMap.entries()))}`);
-        
-        // Prepare the fields object, starting with a copy of the input.
-        const processedFields: Record<string, any> = { ...fields };
-        const fieldMappings: Record<string, string> = {}; // To track field name to ID mappings
-
-        // Handle assignee conversion if provided by name
-        if (processedFields.assignee && typeof processedFields.assignee === 'object' && processedFields.assignee.name && !processedFields.assignee.accountId) {
-          const assigneeDisplayName = processedFields.assignee.name;
-          console.error(`Attempting to resolve assignee by display name: "${assigneeDisplayName}" for update-issue`);
-          try {
-            const usersFound = await jira.userSearch.findUsers({ query: assigneeDisplayName });
-            if (!usersFound || usersFound.length === 0) {
-              return {
-                content: [{ type: "text", text: `Error: Assignee lookup failed. No user found with display name "${assigneeDisplayName}".` }],
-                isError: true, _meta: {}
-              };
-            }
-            if (usersFound.length > 1) {
-              const matchingUsers = usersFound.map(u => `${u.displayName} (AccountId: ${u.accountId})`).join('\n - ');
-              return {
-                content: [{ type: "text", text: `Error: Assignee lookup failed. Multiple users found with display name "${assigneeDisplayName}":\n - ${matchingUsers}\nPlease use accountId for assignee.` }],
-                isError: true, _meta: {}
-              };
-            }
-            const userToAssign = usersFound[0];
-            if (!userToAssign.accountId) {
-              return {
-                content: [{ type: "text", text: `Error: Assignee lookup failed. User "${userToAssign.displayName}" does not have an accountId.` }],
-                isError: true, _meta: {}
-              };
-            }
-            processedFields.assignee = { accountId: userToAssign.accountId }; // Replace with accountId object
-            console.error(`Successfully resolved assignee "${assigneeDisplayName}" to accountId "${userToAssign.accountId}" for update-issue`);
-          } catch (userSearchError: any) {
-            console.error(`Error during assignee lookup for "${assigneeDisplayName}" in update-issue: ${userSearchError.message}`);
-            return {
-              content: [{ type: "text", text: `Error during assignee lookup: ${userSearchError.message}` }],
-              isError: true, _meta: {}
-            };
-          }
-        } else if (processedFields.assignee && typeof processedFields.assignee === 'object' && processedFields.assignee.name && processedFields.assignee.accountId) {
-          // If both name and accountId are provided for assignee, prefer accountId and remove name.
-          console.warn(`Assignee provided with both name and accountId in update-issue. Using accountId: "${processedFields.assignee.accountId}" and removing name field.`);
-          delete processedFields.assignee.name;
-        }
-
-        // Now, map custom field names to IDs for all fields in processedFields
-        const finalJiraFields: Record<string, any> = {};
-        for (const [key, value] of Object.entries(processedFields)) {
-          if (customFieldsMap.has(key)) {
-            const fieldId = customFieldsMap.get(key)!;
-            finalJiraFields[fieldId] = value;
-            fieldMappings[key] = fieldId;
-            console.error(`Mapped field name "${key}" to ID "${fieldId}" in update-issue`);
-          } else {
-            finalJiraFields[key] = value; // Use key directly if not a custom field name or already an ID (like 'assignee')
-            fieldMappings[key] = key;
-            console.error(`Using field key directly: "${key}" in update-issue`);
-          }
-        }
-        
-        // Log the fields being updated
-        console.error(`Updating issue ${issueKey} with final fields: ${JSON.stringify(finalJiraFields)}`);
-        
-        // Update the issue
-        await jira.issues.editIssue({
-          issueIdOrKey: issueKey,
-          fields: finalJiraFields
-        });
-        
-        // Format the field mappings for the response
-        const fieldTexts = Object.entries(fieldMappings).map(([name, id]) => {
-          return name === id ? name : `${name} (${id})`;
-        });
-        
-        const fieldsText = fieldTexts.length > 0
-          ? fieldTexts.join(', ')
-          : 'No fields were updated';
-        
-        return {
-          content: [{
-            type: "text",
-            text: `Request sent to Jira to update issue ${issueKey}. Fields in request: ${fieldsText}`
-          }],
-          _meta: {}
-        };
-      } catch (error: any) {
-        console.error(`Error updating issue: ${error.message}`);
-        if (error.response) {
-          console.error(`Response data: ${JSON.stringify(error.response.data)}`);
-        }
-        
-        // Prepare a detailed error message
-        let errorDetails = `Error updating issue: ${error.message}`;
-        
-        if (error.response && error.response.data) {
-          const responseData = typeof error.response.data === 'object'
-            ? JSON.stringify(error.response.data, null, 2)
-            : error.response.data.toString();
-          
-          errorDetails += `\n\nResponse data:\n${responseData}`;
-        }
-        
-        return {
-          content: [{
-            type: "text",
-            text: errorDetails
-          }],
-          isError: true,
-          _meta: {}
-        };
-      }
+      return await updateIssueHandler(jira, customFieldsMap, args as { issueKey: string; fields: Record<string, any> });
     }
 
     case "list-issue-fields": {
