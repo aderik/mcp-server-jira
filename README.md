@@ -139,11 +139,21 @@ The server is written in TypeScript and uses:
 - `@modelcontextprotocol/sdk` for MCP server implementation
 - `jira.js` for JIRA API integration
 
-To modify the server:
+Recommended scripts:
 
-1. Make changes to `jira.ts`
-2. Run `npm run build` to compile to JavaScript
-3. Restart Claude to pick up the changes
+- Build once: `npm run build`
+- Build and watch: `npm run build:watch`
+- Type-check only: `npm run typecheck`
+- Dev run with watch: `npm run start:dev`
+- Run compiled server: `npm start`
+- Format check: `npm run fmt:check`
+- Format write: `npm run fmt`
+
+Typical workflow:
+
+1. Make changes to [`jira.ts`](jira.ts)
+2. Run `npm run start:dev` during development, or `npm run build` then `npm start` for compiled run
+3. Restart your MCP client if needed to pick up changes
 
 ## Error Handling
 

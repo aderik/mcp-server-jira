@@ -3,16 +3,24 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Version3Client, Version3Models } from "jira.js";
 import { Issue } from "jira.js/out/version3/models";
+import { respond, fail, validateArray, validateString, withJiraError } from "./utils.js";
 
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map<string, string>();
 
+const { JIRA_HOST, JIRA_EMAIL, JIRA_API_TOKEN } = process.env;
+
+if (!JIRA_HOST || !JIRA_EMAIL || !JIRA_API_TOKEN) {
+  console.error("Missing required environment variables. Required: JIRA_HOST, JIRA_EMAIL, JIRA_API_TOKEN");
+  process.exit(1);
+}
+
 const jira = new Version3Client({
-  host: process.env.JIRA_HOST!,
+  host: JIRA_HOST,
   authentication: {
     basic: {
-      email: process.env.JIRA_EMAIL!,
-      apiToken: process.env.JIRA_API_TOKEN!
+      email: JIRA_EMAIL,
+      apiToken: JIRA_API_TOKEN
     }
   }
 });
@@ -854,32 +862,34 @@ ${formattedComments}
             issuetype: {
               name: finalIssueType
             },
-            description: description ? {
-              type: "doc",
-              version: 1,
-              content: [
-                {
-                  type: "paragraph",
-                  content: [
-                    {
-                      type: "text",
-                      text: description
-                    }
-                  ]
-                }
-              ]
-            } : undefined
+            ...(description ? {
+              description: {
+                type: "doc",
+                version: 1,
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [
+                      {
+                        type: "text",
+                        text: description
+                      }
+                    ]
+                  }
+                ]
+              }
+            } : {})
           }
         };
         
         console.error(`Create issue payload: ${JSON.stringify(createIssuePayload)}`);
         
-        const createdIssue = await jira.issues.createIssue(createIssuePayload);
+        await jira.issues.createIssue(createIssuePayload);
 
         return {
           content: [{
             type: "text",
-            text: `🤖 Successfully created sub-ticket ${createdIssue.key} for parent ${parentKey}`
+            text: `🤖 Sub-ticket creation request sent for parent ${parentKey}`
           }],
           _meta: {}
         };
@@ -1083,37 +1093,40 @@ ${formattedComments}
         }
 
         // Create the issue payload with core fields and additional fields
-        const createIssuePayload = {
-          fields: {
-            summary: summary,
-            project: {
-              key: projectKey
-            },
-            issuetype: {
-              name: finalIssueType
-            },
-            description: description ? {
-              type: "doc",
-              version: 1,
-              content: [
-                {
-                  type: "paragraph",
-                  content: [
-                    {
-                      type: "text",
-                      text: description
-                    }
-                  ]
-                }
-              ]
-            } : undefined,
-            ...additionalJiraFields
-          }
+        const issueFields: any = {
+          summary: summary,
+          project: {
+            key: projectKey
+          },
+          issuetype: {
+            name: finalIssueType
+          },
+          ...additionalJiraFields
         };
+
+        if (description) {
+          issueFields.description = {
+            type: "doc",
+            version: 1,
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  {
+                    type: "text",
+                    text: description
+                  }
+                ]
+              }
+            ]
+          };
+        }
+
+        const createIssuePayload: any = { fields: issueFields };
 
         console.error(`Create issue payload: ${JSON.stringify(createIssuePayload)}`);
 
-        const createdIssue = await jira.issues.createIssue(createIssuePayload);
+        await jira.issues.createIssue(createIssuePayload as any);
 
         // Format the field mappings for the response
         const fieldTexts = Object.entries(fieldMappings).map(([name, id]) => {
@@ -1127,7 +1140,7 @@ ${formattedComments}
         return {
           content: [{
             type: "text",
-            text: `🤖 Successfully created ticket ${createdIssue.key} in project ${projectKey}${additionalFieldsText}`
+            text: `🤖 Issue creation request sent for project ${projectKey}${additionalFieldsText}`
           }],
           _meta: {}
         };
@@ -1373,198 +1386,86 @@ ${formattedComments}
     }
 
     case "add-labels": {
-      const { issueKeys, labels } = args as {
-        issueKeys: string[];
-        labels: string[];
-      };
+      const { issueKeys, labels } = args as { issueKeys: string[]; labels: string[] };
 
-      if (!Array.isArray(issueKeys) || issueKeys.length === 0) {
-        return {
-          content: [{
-            type: "text",
-            text: "Error: issueKeys must be a non-empty array of issue keys"
-          }],
-          isError: true,
-          _meta: {}
-        };
-      }
+      const issuesErr = validateArray("issueKeys", issueKeys);
+      if (issuesErr) return fail(issuesErr.replace("array", "array of issue keys"));
+      const labelsErr = validateArray("labels", labels);
+      if (labelsErr) return fail(labelsErr.replace("array", "array of label strings"));
 
-      if (!Array.isArray(labels) || labels.length === 0) {
-        return {
-          content: [{
-            type: "text",
-            text: "Error: labels must be a non-empty array of label strings"
-          }],
-          isError: true,
-          _meta: {}
-        };
-      }
+      return withJiraError(async () => {
+        const results: string[] = [];
+        const errors: string[] = [];
 
-      try {
-        const results = [];
-        const errors = [];
-
-        // Process each issue
         for (const issueKey of issueKeys) {
           try {
-            console.error(`Processing issue ${issueKey}`);
-            
-            // Get current issue data to retrieve existing labels
-            const issue = await jira.issues.getIssue({
-              issueIdOrKey: issueKey,
-              fields: ['labels']
-            });
+            const issue = await jira.issues.getIssue({ issueIdOrKey: issueKey, fields: ["labels"] });
+            const existing = Array.isArray(issue.fields.labels) ? issue.fields.labels : [];
+            const combined = [...new Set([...existing, ...labels])];
 
-            // Get existing labels (or empty array if none)
-            const existingLabels = Array.isArray(issue.fields.labels) ? issue.fields.labels : [];
-            console.error(`Existing labels for ${issueKey}: ${existingLabels.join(', ') || 'none'}`);
-            
-            // Combine existing and new labels, removing duplicates
-            const combinedLabels = [...new Set([...existingLabels, ...labels])];
-            console.error(`Combined labels for ${issueKey}: ${combinedLabels.join(', ')}`);
-            
-            // Update the issue with the combined labels
             await jira.issues.editIssue({
               issueIdOrKey: issueKey,
-              fields: {
-                labels: combinedLabels
-              }
+              fields: { labels: combined },
             });
-            
-            results.push(`${issueKey}: Successfully added labels [${labels.join(', ')}]`);
-          } catch (error: any) {
-            console.error(`Error processing issue ${issueKey}: ${error.message}`);
-            errors.push(`${issueKey}: ${error.message}`);
+
+            results.push(`${issueKey}: labels => [${combined.join(", ")}]`);
+          } catch (e: any) {
+            errors.push(`${issueKey}: ${e?.message ?? String(e)}`);
           }
         }
 
-        // Prepare a more concise response
-        let responseText = '';
-        
+        let msg = "";
         if (results.length > 0) {
-          // Group successful issues by the labels that were added
-          const labelGroups = new Map<string, string[]>();
-          
-          for (const result of results) {
-            const match = result.match(/^(.*?): Successfully added labels \[(.*?)\]$/);
-            if (match) {
-              const [_, issueKey, labelsList] = match;
-              if (!labelGroups.has(labelsList)) {
-                labelGroups.set(labelsList, []);
-              }
-              labelGroups.get(labelsList)!.push(issueKey);
-            }
-          }
-          
-          responseText += `Successfully added labels to ${results.length} of ${issueKeys.length} issues:\n`;
-          
-          // Output each group
-          for (const [labels, issues] of labelGroups.entries()) {
-            const issueCount = issues.length;
-            // If there are many issues, just show the count and first few
-            if (issueCount > 5) {
-              responseText += `- Added [${labels}] to ${issueCount} issues (${issues.slice(0, 3).join(', ')}...)\n`;
-            } else {
-              responseText += `- Added [${labels}] to: ${issues.join(', ')}\n`;
-            }
-          }
+          msg += `Updated ${results.length} of ${issueKeys.length} issues.\n` + results.join("\n");
         }
-        
-        // Always show detailed errors since they're important for troubleshooting
         if (errors.length > 0) {
-          if (responseText) responseText += '\n';
-          responseText += `Failed to process ${errors.length} issues:\n`;
-          responseText += errors.join('\n');
+          if (msg) msg += "\n\n";
+          msg += `Failed ${errors.length} issues:\n` + errors.join("\n");
         }
 
-        return {
-          content: [{
-            type: "text",
-            text: responseText
-          }],
-          isError: errors.length === issueKeys.length, // Only mark as error if all issues failed
-          _meta: {}
-        };
-      } catch (error: any) {
-        console.error(`Error adding labels: ${error.message}`);
-        
-        return {
-          content: [{
-            type: "text",
-            text: `Error adding labels: ${error.message}`
-          }],
-          isError: true,
-          _meta: {}
-        };
-      }
+        const response = respond(msg || "No issues processed.");
+        if (errors.length === issueKeys.length) response.isError = true;
+        return response;
+      }, "Error adding labels");
     }
 
     case "transition-issues": {
-      const { issueKeys, transitionId } = args as {
-        issueKeys: string[];
-        transitionId: string;
-      };
+      const { issueKeys, transitionId } = args as { issueKeys: string[]; transitionId: string };
 
-      if (!Array.isArray(issueKeys) || issueKeys.length === 0) {
-        return {
-          content: [{
-            type: "text",
-            text: "Error: issueKeys must be a non-empty array of issue keys"
-          }],
-          isError: true,
-          _meta: {}
-        };
-      }
+      const issuesErr = validateArray("issueKeys", issueKeys);
+      if (issuesErr) return fail(issuesErr.replace("array", "array of issue keys"));
+      const transitionErr = validateString("transitionId", transitionId);
+      if (transitionErr) return fail(transitionErr);
 
-      if (!transitionId || typeof transitionId !== 'string') {
-        return {
-          content: [{
-            type: "text",
-            text: "Error: transitionId must be a non-empty string"
-          }],
-          isError: true,
-          _meta: {}
-        };
-      }
+      return withJiraError(async () => {
+        const results: string[] = [];
+        const errors: string[] = [];
 
-      const results = [];
-      const errors = [];
-
-      for (const issueKey of issueKeys) {
-        try {
-          await jira.issues.doTransition({
-            issueIdOrKey: issueKey,
-            transition: {
-              id: transitionId
-            }
-          });
-          results.push(`${issueKey}: Successfully transitioned using ID ${transitionId}`);
-        } catch (error: any) {
-          console.error(`Error transitioning issue ${issueKey}: ${error.message}`);
-          errors.push(`${issueKey}: ${error.message}`);
+        for (const issueKey of issueKeys) {
+          try {
+            await jira.issues.doTransition({
+              issueIdOrKey: issueKey,
+              transition: { id: transitionId },
+            });
+            results.push(`${issueKey}: transitioned -> ${transitionId}`);
+          } catch (e: any) {
+            errors.push(`${issueKey}: ${e?.message ?? String(e)}`);
+          }
         }
-      }
 
-      let responseText = '';
-      if (results.length > 0) {
-        responseText += `Successfully transitioned ${results.length} of ${issueKeys.length} issues:\n`;
-        responseText += results.join('\n');
-      }
+        let msg = "";
+        if (results.length > 0) {
+          msg += `Transitioned ${results.length} of ${issueKeys.length} issues:\n` + results.join("\n");
+        }
+        if (errors.length > 0) {
+          if (msg) msg += "\n\n";
+          msg += `Failed ${errors.length} issues:\n` + errors.join("\n");
+        }
 
-      if (errors.length > 0) {
-        if (responseText) responseText += '\n\n';
-        responseText += `Failed to transition ${errors.length} issues:\n`;
-        responseText += errors.join('\n');
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text: responseText || "No issues processed."
-        }],
-        isError: errors.length === issueKeys.length,
-        _meta: {}
-      };
+        const response = respond(msg || "No issues processed.");
+        if (errors.length === issueKeys.length) response.isError = true;
+        return response;
+      }, "Error transitioning issues");
     }
 
     case "list-issue-transitions": {
@@ -1628,102 +1529,53 @@ ${formattedComments}
     }
 
     case "assign-issue": {
-      const { issueKeys, assigneeDisplayName } = args as {
-        issueKeys: string[];
-        assigneeDisplayName: string;
-      };
+      const { issueKeys, assigneeDisplayName } = args as { issueKeys: string[]; assigneeDisplayName: string };
 
-      if (!Array.isArray(issueKeys) || issueKeys.length === 0) {
-        return {
-          content: [{ type: "text", text: "Error: issueKeys must be a non-empty array of issue keys." }],
-          isError: true,
-          _meta: {}
-        };
-      }
-      if (!assigneeDisplayName || typeof assigneeDisplayName !== 'string') {
-        return {
-          content: [{ type: "text", text: "Error: assigneeDisplayName must be a non-empty string." }],
-          isError: true,
-          _meta: {}
-        };
-      }
+      const issuesErr = validateArray("issueKeys", issueKeys);
+      if (issuesErr) return fail(issuesErr.replace("array", "array of issue keys"));
+      const nameErr = validateString("assigneeDisplayName", assigneeDisplayName);
+      if (nameErr) return fail(nameErr);
 
-      try {
-        // Find user by display name
+      return withJiraError(async () => {
         const usersFound = await jira.userSearch.findUsers({ query: assigneeDisplayName });
-
         if (!usersFound || usersFound.length === 0) {
-          return {
-            content: [{ type: "text", text: `Error: No user found with display name "${assigneeDisplayName}".` }],
-            isError: true,
-            _meta: {}
-          };
+          return fail(`Error: No user found with display name "${assigneeDisplayName}".`);
         }
-
         if (usersFound.length > 1) {
-          const matchingUsers = usersFound.map(u => `${u.displayName} (AccountId: ${u.accountId})`).join('\n - ');
-          return {
-            content: [{ type: "text", text: `Error: Multiple users found with display name "${assigneeDisplayName}":\n - ${matchingUsers}\nPlease be more specific or use the accountId.` }],
-            isError: true,
-            _meta: {}
-          };
+          const matching = usersFound.map(u => `${u.displayName} (AccountId: ${u.accountId})`).join("\n - ");
+          return fail(`Error: Multiple users found with display name "${assigneeDisplayName}":\n - ${matching}\nPlease be more specific or use the accountId.`);
         }
 
-        const userToAssign = usersFound[0];
-        if (!userToAssign.accountId) {
-            return {
-                content: [{ type: "text", text: `Error: User "${userToAssign.displayName}" does not have an accountId.` }],
-                isError: true,
-                _meta: {}
-            };
+        const user = usersFound[0];
+        if (!user.accountId) {
+          return fail(`Error: User "${user.displayName}" does not have an accountId.`);
         }
-        
-        const results = [];
-        const errors = [];
+
+        const results: string[] = [];
+        const errors: string[] = [];
 
         for (const issueKey of issueKeys) {
           try {
-            await jira.issues.assignIssue({
-              issueIdOrKey: issueKey,
-              accountId: userToAssign.accountId,
-            });
-            results.push(`${issueKey}: Successfully assigned to ${userToAssign.displayName}`);
-          } catch (error: any) {
-            console.error(`Error assigning issue ${issueKey} to "${assigneeDisplayName}": ${error.message}`);
-            errors.push(`${issueKey}: ${error.message}`);
+            await jira.issues.assignIssue({ issueIdOrKey: issueKey, accountId: user.accountId });
+            results.push(`${issueKey}: assigned to ${user.displayName}`);
+          } catch (e: any) {
+            errors.push(`${issueKey}: ${e?.message ?? String(e)}`);
           }
         }
 
-        let responseText = '';
+        let msg = "";
         if (results.length > 0) {
-          responseText += `Successfully assigned ${results.length} of ${issueKeys.length} issues to ${userToAssign.displayName}:\n`;
-          responseText += results.join('\n');
+          msg += `Assigned ${results.length} of ${issueKeys.length} issues to ${user.displayName}:\n` + results.join("\n");
         }
-
         if (errors.length > 0) {
-          if (responseText) responseText += '\n\n';
-          responseText += `Failed to assign ${errors.length} issues:\n`;
-          responseText += errors.join('\n');
+          if (msg) msg += "\n\n";
+          msg += `Failed to assign ${errors.length} issues:\n` + errors.join("\n");
         }
 
-        return {
-          content: [{ type: "text", text: responseText || "No issues processed." }],
-          isError: errors.length === issueKeys.length,
-          _meta: {}
-        };
-
-      } catch (error: any) {
-        // Catch errors from user search itself
-        console.error(`Error during assignment process for display name "${assigneeDisplayName}": ${error.message}`);
-        if (error.response) {
-          console.error(`Response data: ${JSON.stringify(error.response.data)}`);
-        }
-        return {
-          content: [{ type: "text", text: `Error assigning issues: ${error.message}` }],
-          isError: true,
-          _meta: {}
-        };
-      }
+        const response = respond(msg || "No issues processed.");
+        if (errors.length === issueKeys.length) response.isError = true;
+        return response;
+      }, `Error during assignment process for display name "${assigneeDisplayName}"`);
     }
 
     case "list-users": {
@@ -1872,32 +1724,34 @@ async function handleSubTicketCreation(args: {
         issuetype: {
           name: finalIssueType
         },
-        description: description ? {
-          type: "doc",
-          version: 1,
-          content: [
-            {
-              type: "paragraph",
-              content: [
-                {
-                  type: "text",
-                  text: description
-                }
-              ]
-            }
-          ]
-        } : undefined
+        ...(description ? {
+          description: {
+            type: "doc",
+            version: 1,
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  {
+                    type: "text",
+                    text: description
+                  }
+                ]
+              }
+            ]
+          }
+        } : {})
       }
     };
     
     console.error(`Create issue payload: ${JSON.stringify(createIssuePayload)}`);
     
-    const createdIssue = await jira.issues.createIssue(createIssuePayload);
+    await jira.issues.createIssue(createIssuePayload);
 
     return {
       content: [{
         type: "text",
-        text: `🤖 Successfully created sub-ticket ${createdIssue.key} for parent ${parentKey}`
+        text: `🤖 Sub-ticket creation request sent for parent ${parentKey}`
       }],
       _meta: {}
     };
