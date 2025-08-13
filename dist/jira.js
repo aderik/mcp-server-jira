@@ -19,6 +19,7 @@ import { transitionIssuesDefinition, transitionIssuesHandler } from "./tools/tra
 import { listIssueTransitionsDefinition } from "./tools/listIssueTransitions.js";
 import { assignIssueDefinition } from "./tools/assignIssue.js";
 import { addLabelsDefinition, addLabelsHandler } from "./tools/addLabels.js";
+import { linkTicketsDefinition, linkTicketsHandler } from "./tools/linkTickets.js";
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map();
 const { JIRA_HOST, JIRA_EMAIL, JIRA_API_TOKEN } = process.env;
@@ -155,18 +156,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
         searchIssuesDefinition,
         addLabelsDefinition,
-        {
-            name: "link-tickets",
-            description: "Link two tickets with a 'relates to' relationship",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    sourceIssueKey: { type: "string" },
-                    targetIssueKey: { type: "string" }
-                },
-                required: ["sourceIssueKey", "targetIssueKey"]
-            }
-        },
+        linkTicketsDefinition,
         listSprintTicketsDefinition,
         getTicketDetailsDefinition,
         addCommentDefinition,
@@ -264,52 +254,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             return await createSubTicketHandler(jira, args);
         }
         case "link-tickets": {
-            const { sourceIssueKey, targetIssueKey } = args;
-            try {
-                // Get all issue link types
-                const linkTypes = await jira.issueLinkTypes.getIssueLinkTypes();
-                // Find the "relates to" link type
-                const relatesTo = linkTypes.issueLinkTypes?.find(linkType => linkType.name?.toLowerCase() === "relates to" ||
-                    linkType.inward?.toLowerCase() === "relates to" ||
-                    linkType.outward?.toLowerCase() === "relates to");
-                if (!relatesTo) {
-                    throw new Error("Could not find 'relates to' link type");
-                }
-                // Create the link between the issues
-                await jira.issueLinks.linkIssues({
-                    type: {
-                        name: relatesTo.name || "Relates"
-                    },
-                    inwardIssue: {
-                        key: targetIssueKey
-                    },
-                    outwardIssue: {
-                        key: sourceIssueKey
-                    }
-                });
-                return {
-                    content: [{
-                            type: "text",
-                            text: `🤖 Successfully linked ${sourceIssueKey} to ${targetIssueKey} with relationship "${relatesTo.name || "Relates"}"`
-                        }],
-                    _meta: {}
-                };
-            }
-            catch (error) {
-                // Only log errors to stderr, not stdout
-                console.error(`Error linking tickets: ${error.message}`);
-                if (error.response) {
-                    console.error(`Response data: ${JSON.stringify(error.response.data)}`);
-                }
-                return {
-                    content: [{
-                            type: "text",
-                            text: `Error linking tickets: ${error.message}`
-                        }],
-                    isError: true,
-                    _meta: {}
-                };
-            }
+            return await linkTicketsHandler(jira, args);
         }
         case "create-ticket": {
             return await createTicketHandler(jira, customFieldsMap, args);
