@@ -15,7 +15,9 @@ import { createSubTicketDefinition, createSubTicketHandler } from "./tools/creat
 import { createTicketDefinition, createTicketHandler } from "./tools/createTicket.js";
 import { updateIssueDefinition, updateIssueHandler } from "./tools/updateIssue.js";
 import { listIssueFieldsDefinition, listIssueFieldsHandler } from "./tools/listIssueFields.js";
+import { transitionIssuesDefinition, transitionIssuesHandler } from "./tools/transitionIssues.js";
 import { listIssueTransitionsDefinition } from "./tools/listIssueTransitions.js";
+import { assignIssueDefinition } from "./tools/assignIssue.js";
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map();
 const { JIRA_HOST, JIRA_EMAIL, JIRA_API_TOKEN } = process.env;
@@ -191,44 +193,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         createSubTicketDefinition,
         createTicketDefinition,
         updateIssueDefinition,
-        listIssueFieldsDefinition, {
-            name: "transition-issues",
-            description: "Transition multiple issues to a new status using a transition ID",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    issueKeys: {
-                        type: "array",
-                        items: { type: "string" },
-                        description: "List of issue keys to transition"
-                    },
-                    transitionId: {
-                        type: "string",
-                        description: "The ID of the transition to perform (e.g., '5' or 'Resolve Issue')"
-                    }
-                },
-                required: ["issueKeys", "transitionId"]
-            }
-        },
-        listIssueTransitionsDefinition, {
-            name: "assign-issue",
-            description: "Assign an issue to a user by their display name.",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    issueKeys: {
-                        type: "array",
-                        items: { type: "string" },
-                        description: "List of issue keys to assign (e.g., ['EDU-123', 'EDU-124'])."
-                    },
-                    assigneeDisplayName: {
-                        type: "string",
-                        description: "The display name of the user to assign the issues to (e.g., 'John Doe')."
-                    }
-                },
-                required: ["issueKeys", "assigneeDisplayName"]
-            }
-        },
+        listIssueFieldsDefinition,
+        transitionIssuesDefinition,
+        listIssueTransitionsDefinition,
+        assignIssueDefinition,
         listJiraFiltersDefinition,
         listUsersDefinition
     ]
@@ -309,22 +277,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         }
         case "list-child-issues": {
             return await listChildIssuesHandler(jira, args);
-        }
-        case "list-child-issues": {
-            const { parentKey } = args;
-            // Search for issues that have the specified parent
-            const jql = `parent = ${parentKey} ORDER BY created ASC`;
-            const issues = await jira.issueSearch.searchForIssuesUsingJql({
-                jql,
-                fields: ['summary', 'status', 'assignee', 'issuetype']
-            });
-            return {
-                content: [{
-                        type: "text",
-                        text: (issues.issues || []).map((issue) => `${issue.key}: ${issue.fields.summary || 'No summary'} (${issue.fields.status?.name || 'No status'}) [Type: ${issue.fields.issuetype?.name || 'Unknown'}, Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}]`).join("\n") || 'No child issues found'
-                    }],
-                _meta: {}
-            };
         }
         case "create-sub-ticket": {
             return await createSubTicketHandler(jira, args);
@@ -428,42 +380,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             }, "Error adding labels");
         }
         case "transition-issues": {
-            const { issueKeys, transitionId } = args;
-            const issuesErr = validateArray("issueKeys", issueKeys);
-            if (issuesErr)
-                return fail(issuesErr.replace("array", "array of issue keys"));
-            const transitionErr = validateString("transitionId", transitionId);
-            if (transitionErr)
-                return fail(transitionErr);
-            return withJiraError(async () => {
-                const results = [];
-                const errors = [];
-                for (const issueKey of issueKeys) {
-                    try {
-                        await jira.issues.doTransition({
-                            issueIdOrKey: issueKey,
-                            transition: { id: transitionId },
-                        });
-                        results.push(`${issueKey}: transitioned -> ${transitionId}`);
-                    }
-                    catch (e) {
-                        errors.push(`${issueKey}: ${e?.message ?? String(e)}`);
-                    }
-                }
-                let msg = "";
-                if (results.length > 0) {
-                    msg += `Transitioned ${results.length} of ${issueKeys.length} issues:\n` + results.join("\n");
-                }
-                if (errors.length > 0) {
-                    if (msg)
-                        msg += "\n\n";
-                    msg += `Failed ${errors.length} issues:\n` + errors.join("\n");
-                }
-                const response = respond(msg || "No issues processed.");
-                if (errors.length === issueKeys.length)
-                    response.isError = true;
-                return response;
-            }, "Error transitioning issues");
+            return await transitionIssuesHandler(jira, args);
         }
         case "list-issue-transitions": {
             const { issueKey } = args;
