@@ -3,7 +3,6 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Version3Client } from "jira.js";
-import { respond, fail, validateArray, validateString, withJiraError } from "./utils.js";
 import { listJiraFiltersDefinition, listJiraFiltersHandler } from "./tools/listJiraFilters.js";
 import { listUsersDefinition, listUsersHandler } from "./tools/listUsers.js";
 import { searchIssuesDefinition, searchIssuesHandler } from "./tools/searchIssues.js";
@@ -16,8 +15,8 @@ import { createTicketDefinition, createTicketHandler } from "./tools/createTicke
 import { updateIssueDefinition, updateIssueHandler } from "./tools/updateIssue.js";
 import { listIssueFieldsDefinition, listIssueFieldsHandler } from "./tools/listIssueFields.js";
 import { transitionIssuesDefinition, transitionIssuesHandler } from "./tools/transitionIssues.js";
-import { listIssueTransitionsDefinition } from "./tools/listIssueTransitions.js";
-import { assignIssueDefinition } from "./tools/assignIssue.js";
+import { listIssueTransitionsDefinition, listIssueTransitionsHandler } from "./tools/listIssueTransitions.js";
+import { assignIssueDefinition, assignIssueHandler } from "./tools/assignIssue.js";
 import { addLabelsDefinition, addLabelsHandler } from "./tools/addLabels.js";
 import { linkTicketsDefinition, linkTicketsHandler } from "./tools/linkTickets.js";
 // Map to store custom field information (name to ID mapping)
@@ -54,103 +53,7 @@ async function initializeCustomFields() {
         console.error(`Error initializing custom fields: ${error.message}`);
     }
 }
-// Helper function to format field values for display
-function formatFieldValue(value) {
-    if (value === null || value === undefined) {
-        return 'Not set';
-    }
-    if (typeof value === 'object') {
-        // Handle Atlassian Document Format
-        if (value.type === 'doc') {
-            return extractTextFromADF(value);
-        }
-        // Handle user objects
-        if (value.displayName) {
-            return value.displayName;
-        }
-        // Handle array values
-        if (Array.isArray(value)) {
-            return value.map(item => formatFieldValue(item)).join(', ');
-        }
-        // Default object handling
-        return JSON.stringify(value);
-    }
-    // Simple values
-    return String(value);
-}
-// Determine if a field value is meaningfully set (not null/empty)
-function hasMeaningfulValue(value) {
-    if (value === null || value === undefined)
-        return false;
-    const t = typeof value;
-    if (t === 'string')
-        return value.trim().length > 0;
-    if (t === 'number' || t === 'boolean')
-        return true;
-    if (Array.isArray(value)) {
-        return value.some(item => hasMeaningfulValue(item));
-    }
-    if (t === 'object') {
-        // Consider Atlassian Document Format meaningful only if it yields non-empty text
-        if (value.type === 'doc') {
-            const text = extractTextFromADF(value).trim();
-            return text.length > 0;
-        }
-        // Common Jira shapes (option, user, named objects)
-        const candidateKeys = ['value', 'displayName', 'name', 'id', 'text'];
-        for (const key of candidateKeys) {
-            if (hasMeaningfulValue(value[key]))
-                return true;
-        }
-        // Fallback: any own property with a meaningful value
-        for (const key in value) {
-            if (Object.prototype.hasOwnProperty.call(value, key) && hasMeaningfulValue(value[key])) {
-                return true;
-            }
-        }
-        return false;
-    }
-    return false;
-}
 const server = new Server({ name: "jira-server", version: "1.0.0" }, { capabilities: { tools: {}, resources: {} } });
-// Reusable fields schema for both create and update operations
-const fieldsSchema = {
-    type: "object",
-    description: "Object containing field names and their values. Can include both standard fields and custom fields. For user fields (like assignee, refiners), use objects with accountId: {\"accountId\": \"user-account-id\"}. For arrays of users, use [{\"accountId\": \"id1\"}, {\"accountId\": \"id2\"}]. For option fields, use {\"value\": \"option-name\"} or {\"id\": \"option-id\"}.",
-    additionalProperties: {
-        oneOf: [
-            { type: "string", description: "Simple text value" },
-            { type: "number", description: "Numeric value" },
-            { type: "boolean", description: "Boolean value" },
-            {
-                type: "object",
-                description: "Complex field value",
-                examples: [
-                    { "accountId": "628b83c6c65b72006960dafc" },
-                    { "value": "High" },
-                    { "id": "10001" }
-                ]
-            },
-            {
-                type: "array",
-                description: "Array of values (e.g., multiple users, labels)",
-                items: {
-                    oneOf: [
-                        { type: "string" },
-                        {
-                            type: "object",
-                            description: "User reference",
-                            properties: {
-                                accountId: { type: "string", description: "Jira user account ID" }
-                            },
-                            required: ["accountId"]
-                        }
-                    ]
-                }
-            }
-        ]
-    }
-};
 // List available tools
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
@@ -173,61 +76,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         listUsersDefinition
     ]
 }));
-// Function to extract text content from Atlassian Document Format with preserved formatting
-function extractTextFromADF(node, depth = 0) {
-    if (!node)
-        return 'No description';
-    const indent = '  '.repeat(depth);
-    let result = '';
-    if (typeof node === 'string') {
-        return indent + node;
-    }
-    // Handle different node types
-    switch (node.type) {
-        case 'heading':
-            result += `${indent}${node.content?.[0]?.text || ''}\n`;
-            break;
-        case 'paragraph':
-            if (node.content) {
-                const paragraphText = node.content
-                    .map((content) => content.text || '')
-                    .join('')
-                    .trim();
-                if (paragraphText) {
-                    result += `${indent}${paragraphText}\n`;
-                }
-            }
-            break;
-        case 'bulletList':
-        case 'orderedList':
-            if (node.content) {
-                result += node.content
-                    .map((item) => extractTextFromADF(item, depth))
-                    .join('');
-            }
-            break;
-        case 'listItem':
-            if (node.content) {
-                const itemContent = node.content
-                    .map((content) => extractTextFromADF(content, depth + 1))
-                    .join('')
-                    .trim();
-                result += `${indent}• ${itemContent}\n`;
-            }
-            break;
-        default:
-            // Handle nested content
-            if (Array.isArray(node.content)) {
-                result += node.content
-                    .map((content) => extractTextFromADF(content, depth))
-                    .join('');
-            }
-            else if (node.text) {
-                result += indent + node.text;
-            }
-    }
-    return result;
-}
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
@@ -272,104 +120,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             return await transitionIssuesHandler(jira, args);
         }
         case "list-issue-transitions": {
-            const { issueKey } = args;
-            if (!issueKey || typeof issueKey !== 'string') {
-                return {
-                    content: [{
-                            type: "text",
-                            text: "Error: issueKey must be a non-empty string"
-                        }],
-                    isError: true,
-                    _meta: {}
-                };
-            }
-            try {
-                const transitionsResponse = await jira.issues.getTransitions({ issueIdOrKey: issueKey });
-                const availableTransitions = (transitionsResponse.transitions || []).map(t => ({
-                    id: t.id,
-                    name: t.name,
-                    toStatus: t.to?.name,
-                    toStatusCategory: t.to?.statusCategory?.name
-                }));
-                if (availableTransitions.length === 0) {
-                    return {
-                        content: [{
-                                type: "text",
-                                text: `No available transitions found for issue ${issueKey}.`
-                            }],
-                        _meta: {}
-                    };
-                }
-                const formattedTransitions = availableTransitions.map(t => `ID: ${t.id}, Name: "${t.name}" (To Status: ${t.toStatus || 'N/A'} - ${t.toStatusCategory || 'N/A'})`).join('\n');
-                return {
-                    content: [{
-                            type: "text",
-                            text: `Available transitions for ${issueKey}:\n${formattedTransitions}`
-                        }],
-                    _meta: {}
-                };
-            }
-            catch (error) {
-                console.error(`Error listing transitions for issue ${issueKey}: ${error.message}`);
-                if (error.response) {
-                    console.error(`Response data: ${JSON.stringify(error.response.data)}`);
-                }
-                return {
-                    content: [{
-                            type: "text",
-                            text: `Error listing transitions for ${issueKey}: ${error.message}`
-                        }],
-                    isError: true,
-                    _meta: {}
-                };
-            }
+            return await listIssueTransitionsHandler(jira, args);
         }
         case "assign-issue": {
-            const { issueKeys, assigneeDisplayName } = args;
-            const issuesErr = validateArray("issueKeys", issueKeys);
-            if (issuesErr)
-                return fail(issuesErr.replace("array", "array of issue keys"));
-            const nameErr = validateString("assigneeDisplayName", assigneeDisplayName);
-            if (nameErr)
-                return fail(nameErr);
-            return withJiraError(async () => {
-                const usersFound = await jira.userSearch.findUsers({ query: assigneeDisplayName });
-                if (!usersFound || usersFound.length === 0) {
-                    return fail(`Error: No user found with display name "${assigneeDisplayName}".`);
-                }
-                if (usersFound.length > 1) {
-                    const matching = usersFound.map(u => `${u.displayName} (AccountId: ${u.accountId})`).join("\n - ");
-                    return fail(`Error: Multiple users found with display name "${assigneeDisplayName}":\n - ${matching}\nPlease be more specific or use the accountId.`);
-                }
-                const user = usersFound[0];
-                if (!user.accountId) {
-                    return fail(`Error: User "${user.displayName}" does not have an accountId.`);
-                }
-                const results = [];
-                const errors = [];
-                for (const issueKey of issueKeys) {
-                    try {
-                        await jira.issues.assignIssue({ issueIdOrKey: issueKey, accountId: user.accountId });
-                        results.push(`${issueKey}: assigned to ${user.displayName}`);
-                    }
-                    catch (e) {
-                        errors.push(`${issueKey}: ${e?.message ?? String(e)}`);
-                    }
-                }
-                let msg = "";
-                if (results.length > 0) {
-                    msg += `Assigned ${results.length} of ${issueKeys.length} issues to ${user.displayName}:\n` + results.join("\n");
-                }
-                if (errors.length > 0) {
-                    if (msg)
-                        msg += "\n\n";
-                    msg += `Failed to assign ${errors.length} issues:\n` + errors.join("\n");
-                }
-                const response = respond(msg || "No issues processed.");
-                if (errors.length === issueKeys.length)
-                    response.isError = true;
-                return response;
-            }, `Error during assignment process for display name "${assigneeDisplayName}"`);
+            return await assignIssueHandler(jira, args);
         }
         case "list-users": {
             return await listUsersHandler(jira, args);
@@ -381,98 +135,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             throw new Error(`Unknown tool: ${name}`);
     }
 });
-// Helper function to handle sub-ticket creation
-async function handleSubTicketCreation(args) {
-    const { parentKey, summary, description = "", issueType = "Sub-task" } = args;
-    try {
-        // First, get the parent issue to determine the project
-        const parentIssue = await jira.issues.getIssue({
-            issueIdOrKey: parentKey,
-            fields: ['project', 'issuetype']
-        });
-        if (!parentIssue || !parentIssue.fields.project) {
-            throw new Error(`Parent issue ${parentKey} not found or has no project`);
-        }
-        console.error(`Creating sub-task for ${parentKey} in project ${parentIssue.fields.project.key}`);
-        // Get available issue types to verify the requested type exists
-        const createMeta = await jira.issues.getCreateIssueMeta({
-            projectIds: [parentIssue.fields.project.id],
-            expand: "projects.issuetypes"
-        });
-        // Filter for subtask issue types
-        const subtaskTypes = createMeta.projects?.[0]?.issuetypes?.filter((it) => it.subtask) || [];
-        const availableIssueTypes = subtaskTypes.map((it) => it.name);
-        console.error(`Available subtask types: ${availableIssueTypes.join(', ')}`);
-        // Use the first available subtask type if the requested one doesn't exist
-        const finalIssueType = availableIssueTypes.includes(issueType)
-            ? issueType
-            : (availableIssueTypes[0] || "Sub-task");
-        console.error(`Using issue type: ${finalIssueType}`);
-        // Create the sub-task
-        const createIssuePayload = {
-            fields: {
-                summary: summary,
-                parent: {
-                    key: parentKey
-                },
-                project: {
-                    id: parentIssue.fields.project.id
-                },
-                issuetype: {
-                    name: finalIssueType
-                },
-                ...(description ? {
-                    description: {
-                        type: "doc",
-                        version: 1,
-                        content: [
-                            {
-                                type: "paragraph",
-                                content: [
-                                    {
-                                        type: "text",
-                                        text: description
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                } : {})
-            }
-        };
-        console.error(`Create issue payload: ${JSON.stringify(createIssuePayload)}`);
-        await jira.issues.createIssue(createIssuePayload);
-        return {
-            content: [{
-                    type: "text",
-                    text: `🤖 Sub-ticket creation request sent for parent ${parentKey}`
-                }],
-            _meta: {}
-        };
-    }
-    catch (error) {
-        console.error(`Error creating sub-ticket: ${error.message}`);
-        if (error.response) {
-            console.error(`Response data: ${JSON.stringify(error.response.data)}`);
-        }
-        // Prepare a detailed error message
-        let errorDetails = `Error creating sub-ticket: ${error.message}`;
-        if (error.response && error.response.data) {
-            const responseData = typeof error.response.data === 'object'
-                ? JSON.stringify(error.response.data, null, 2)
-                : error.response.data.toString();
-            errorDetails += `\n\nResponse data:\n${responseData}`;
-        }
-        return {
-            content: [{
-                    type: "text",
-                    text: errorDetails
-                }],
-            isError: true,
-            _meta: {}
-        };
-    }
-}
 // Start server
 (async () => {
     try {
