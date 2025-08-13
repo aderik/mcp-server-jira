@@ -2,8 +2,7 @@ import { listChildIssuesDefinition, listChildIssuesHandler } from "./tools/listC
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { Version3Client, Version3Models } from "jira.js";
-import { respond, fail, validateArray, validateString, withJiraError } from "./utils.js";
+import { Version3Client } from "jira.js";
 import { listJiraFiltersDefinition, listJiraFiltersHandler } from "./tools/listJiraFilters.js";
 import { listUsersDefinition, listUsersHandler } from "./tools/listUsers.js";
 import { searchIssuesDefinition, searchIssuesHandler } from "./tools/searchIssues.js";
@@ -11,7 +10,7 @@ import { listSprintTicketsDefinition, listSprintTicketsHandler } from "./tools/l
 import { getTicketDetailsDefinition, getTicketDetailsHandler } from "./tools/getTicketDetails.js";
 import { addCommentDefinition, addCommentHandler } from "./tools/addComment.js";
 import { updateDescriptionDefinition, updateDescriptionHandler } from "./tools/updateDescription.js";
-import { createSubTicketDefinition, createSubTicketHandler, createSubTicketCore } from "./tools/createSubTicket.js";
+import { createSubTicketDefinition, createSubTicketHandler } from "./tools/createSubTicket.js";
 import { createTicketDefinition, createTicketHandler } from "./tools/createTicket.js";
 import { updateIssueDefinition, updateIssueHandler } from "./tools/updateIssue.js";
 import { listIssueFieldsDefinition, listIssueFieldsHandler } from "./tools/listIssueFields.js";
@@ -93,7 +92,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 
 // Handle tool execution
-server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   switch (name) {

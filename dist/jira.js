@@ -77,7 +77,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     ]
 }));
 // Handle tool execution
-server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     switch (name) {
         case "search-issues": {
