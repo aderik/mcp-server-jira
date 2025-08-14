@@ -12,13 +12,13 @@ import { addCommentDefinition, addCommentHandler } from "./tools/addComment.js";
 import { updateDescriptionDefinition, updateDescriptionHandler } from "./tools/updateDescription.js";
 import { createSubTicketDefinition, createSubTicketHandler } from "./tools/createSubTicket.js";
 import { createTicketDefinition, createTicketHandler } from "./tools/createTicket.js";
-import { updateIssueDefinition, updateIssueHandler } from "./tools/updateIssue.js";
+import { updateIssuesDefinition, updateIssuesHandler } from "./tools/updateIssue.js";
 import { listIssueFieldsDefinition, listIssueFieldsHandler } from "./tools/listIssueFields.js";
 import { transitionIssuesDefinition, transitionIssuesHandler } from "./tools/transitionIssues.js";
 import { listIssueTransitionsDefinition, listIssueTransitionsHandler } from "./tools/listIssueTransitions.js";
 import { assignIssueDefinition, assignIssueHandler } from "./tools/assignIssue.js";
 import { addLabelsDefinition, addLabelsHandler } from "./tools/addLabels.js";
-import { linkTicketsDefinition, linkTicketsHandler } from "./tools/linkTickets.js";
+import { linkIssuesDefinition, linkIssuesHandler } from "./tools/linkTickets.js";
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map();
 const { JIRA_HOST, JIRA_EMAIL, JIRA_API_TOKEN } = process.env;
@@ -59,7 +59,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
         searchIssuesDefinition,
         addLabelsDefinition,
-        linkTicketsDefinition,
+        linkIssuesDefinition,
         listSprintTicketsDefinition,
         getTicketDetailsDefinition,
         addCommentDefinition,
@@ -67,7 +67,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         listChildIssuesDefinition,
         createSubTicketDefinition,
         createTicketDefinition,
-        updateIssueDefinition,
+        updateIssuesDefinition,
         listIssueFieldsDefinition,
         transitionIssuesDefinition,
         listIssueTransitionsDefinition,
@@ -101,14 +101,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         case "create-sub-ticket": {
             return await createSubTicketHandler(jira, args);
         }
-        case "link-tickets": {
-            return await linkTicketsHandler(jira, args);
+        case "link-issues": {
+            return await linkIssuesHandler(jira, args);
         }
         case "create-ticket": {
             return await createTicketHandler(jira, customFieldsMap, args);
         }
-        case "update-issue": {
-            return await updateIssueHandler(jira, customFieldsMap, args);
+        case "update-issues": {
+            return await updateIssuesHandler(jira, customFieldsMap, args);
         }
         case "list-issue-fields": {
             return await listIssueFieldsHandler(jira, customFieldsMap, args);
