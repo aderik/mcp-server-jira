@@ -2,54 +2,79 @@ import { Version3Client } from "jira.js";
 import type { McpResponse } from "../utils.js";
 import { respond, withJiraError } from "../utils.js";
 
-export const linkTicketsDefinition = {
-    name: "link-tickets",
-    description: "Link two tickets with a 'relates to' relationship",
+export const linkIssuesDefinition = {
+    name: "link-issues",
+    description: "Link multiple tickets using the 'relates to' relationship. Provide inwardIssueKeys and outwardIssueKeys lists to create links in both directions.",
     inputSchema: {
         type: "object",
         properties: {
-            sourceIssueKey: { type: "string" },
-            targetIssueKey: { type: "string" }
+            inwardIssueKeys: {
+                type: "array",
+                items: { type: "string" },
+                description: "Keys that will be used as inwardIssue in links"
+            },
+            outwardIssueKeys: {
+                type: "array",
+                items: { type: "string" },
+                description: "Keys that will be used as outwardIssue in links"
+            }
         },
-        required: ["sourceIssueKey", "targetIssueKey"]
+        required: ["inwardIssueKeys", "outwardIssueKeys"]
     }
 };
 
-export async function linkTicketsHandler(
+export async function linkIssuesHandler(
     jira: Version3Client,
-    args: { sourceIssueKey: string; targetIssueKey: string; }
+    args: { inwardIssueKeys: string[]; outwardIssueKeys: string[]; }
 ): Promise<McpResponse> {
-    const { sourceIssueKey, targetIssueKey } = args;
-
+    const { inwardIssueKeys, outwardIssueKeys } = args;
+ 
     return withJiraError(async () => {
-        // Get all issue link types
+        if (!Array.isArray(inwardIssueKeys) || inwardIssueKeys.length === 0) {
+            return respond("Error: inwardIssueKeys must be a non-empty array of issue keys.");
+        }
+        if (!Array.isArray(outwardIssueKeys) || outwardIssueKeys.length === 0) {
+            return respond("Error: outwardIssueKeys must be a non-empty array of issue keys.");
+        }
+ 
         const linkTypes = await jira.issueLinkTypes.getIssueLinkTypes();
-
-        // Find the "relates to" link type
         const relatesTo = linkTypes.issueLinkTypes?.find(
             linkType =>
                 linkType.name?.toLowerCase() === "relates to" ||
                 linkType.inward?.toLowerCase() === "relates to" ||
                 linkType.outward?.toLowerCase() === "relates to"
         );
-
         if (!relatesTo) {
             throw new Error("Could not find 'relates to' link type");
         }
-
-        // Create the link between the issues
-        await jira.issueLinks.linkIssues({
-            type: {
-                name: relatesTo.name || "Relates"
-            },
-            inwardIssue: {
-                key: targetIssueKey
-            },
-            outwardIssue: {
-                key: sourceIssueKey
+ 
+        const results: string[] = [];
+        const errors: string[] = [];
+ 
+        // Create cross-product links: every outward -> every inward (outwardIssue, inwardIssue)
+        for (const outward of outwardIssueKeys) {
+            for (const inward of inwardIssueKeys) {
+                try {
+                    await jira.issueLinks.linkIssues({
+                        type: { name: relatesTo.name || "Relates" },
+                        inwardIssue: { key: inward },
+                        outwardIssue: { key: outward }
+                    });
+                    results.push(`${outward} -> ${inward}`);
+                } catch (e: any) {
+                    errors.push(`${outward} -> ${inward}: ${e?.message ?? String(e)}`);
+                }
             }
-        });
-
-        return respond(`Successfully linked ${sourceIssueKey} to ${targetIssueKey} with relationship "${relatesTo.name || "Relates"}"`);
-    }, "Error linking tickets");
+        }
+ 
+        let msg = `Link type: "${relatesTo.name || "Relates"}"\n`;
+        if (results.length > 0) {
+            msg += `Created ${results.length} links:\n` + results.join("\n");
+        }
+        if (errors.length > 0) {
+            if (results.length > 0) msg += "\n\n";
+            msg += `Failed ${errors.length} links:\n` + errors.join("\n");
+        }
+        return respond(msg || "No links created.");
+    }, "Error linking issues");
 }

@@ -12,13 +12,13 @@ import { addCommentDefinition, addCommentHandler } from "./tools/addComment.js";
 import { updateDescriptionDefinition, updateDescriptionHandler } from "./tools/updateDescription.js";
 import { createSubTicketDefinition, createSubTicketHandler } from "./tools/createSubTicket.js";
 import { createTicketDefinition, createTicketHandler } from "./tools/createTicket.js";
-import { updateIssueDefinition, updateIssueHandler } from "./tools/updateIssue.js";
+import { updateIssuesDefinition, updateIssuesHandler } from "./tools/updateIssue.js";
 import { listIssueFieldsDefinition, listIssueFieldsHandler } from "./tools/listIssueFields.js";
 import { transitionIssuesDefinition, transitionIssuesHandler } from "./tools/transitionIssues.js";
 import { listIssueTransitionsDefinition, listIssueTransitionsHandler } from "./tools/listIssueTransitions.js";
 import { assignIssueDefinition, assignIssueHandler } from "./tools/assignIssue.js";
 import { addLabelsDefinition, addLabelsHandler } from "./tools/addLabels.js";
-import { linkTicketsDefinition, linkTicketsHandler } from "./tools/linkTickets.js";
+import { linkIssuesDefinition, linkIssuesHandler } from "./tools/linkTickets.js";
 
 // Map to store custom field information (name to ID mapping)
 const customFieldsMap = new Map<string, string>();
@@ -72,7 +72,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     searchIssuesDefinition,
     addLabelsDefinition,
-    linkTicketsDefinition,
+    linkIssuesDefinition,
     listSprintTicketsDefinition,
     getTicketDetailsDefinition,
     addCommentDefinition,
@@ -80,7 +80,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     listChildIssuesDefinition,
     createSubTicketDefinition,
     createTicketDefinition,
-    updateIssueDefinition,
+    updateIssuesDefinition,
     listIssueFieldsDefinition,
     transitionIssuesDefinition,
     listIssueTransitionsDefinition,
@@ -132,8 +132,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return await createSubTicketHandler(jira, args as { parentKey: string; summary: string; description?: string; issueType?: string });
     }
 
-    case "link-tickets": {
-      return await linkTicketsHandler(jira, args as { sourceIssueKey: string; targetIssueKey: string });
+    case "link-issues": {
+      return await linkIssuesHandler(jira, args as { inwardIssueKeys: string[]; outwardIssueKeys: string[] });
     }
 
     case "create-ticket": {
@@ -147,8 +147,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       });
     }
 
-    case "update-issue": {
-      return await updateIssueHandler(jira, customFieldsMap, args as { issueKey: string; fields: Record<string, any> });
+    case "update-issues": {
+      return await updateIssuesHandler(jira, customFieldsMap, args as { issueKeys: string[]; fields: Record<string, any> });
     }
 
     case "list-issue-fields": {
