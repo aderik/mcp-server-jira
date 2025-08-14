@@ -25,15 +25,19 @@ export async function listChildIssuesHandler(
     fields: ["summary", "status", "assignee", "issuetype"],
   });
 
-  const text =
+  const baseHost = (process.env.JIRA_HOST || "").replace(/\/+$/, "");
+  const urlPattern = baseHost ? `${baseHost}/browse/{ISSUE_KEY}` : "{issue.self}";
+  const items =
     (issues.issues || [])
       .map(
         (issue: any) =>
           `${issue.key}: ${issue.fields.summary || "No summary"} (${issue.fields.status?.name || "No status"}) [Type: ${
             issue.fields.issuetype?.name || "Unknown"
           }, Assignee: ${issue.fields.assignee?.displayName || "Unassigned"}]`
-      )
-      .join("\n") || "No child issues found";
+      );
+  const text = items.length > 0
+    ? `URL pattern: ${urlPattern}\n\n${items.join("\n")}`
+    : "No child issues found";
 
   return { content: [{ type: "text", text }], _meta: {} };
 }

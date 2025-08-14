@@ -90,13 +90,13 @@ export async function searchIssuesHandler(
       startAt: validatedStartAt,
       fields: ["summary", "status", "issuetype", "assignee", "updated", "statusCategory"],
     });
-
+ 
+    const baseHost = (process.env.JIRA_HOST || "").replace(/\/+$/, "");
+    const urlPattern = baseHost ? `${baseHost}/browse/{ISSUE_KEY}` : "{issue.self}";
     const formattedIssues = (issues.issues || []).map((issue: any) => {
       const statusCat = issue.fields.status?.statusCategory?.name || "Unknown";
       const updated = issue.fields.updated ? new Date(issue.fields.updated).toLocaleString() : "Unknown";
-      return `${issue.key}: ${issue.fields.summary || "No summary"} [${issue.fields.issuetype?.name || "Unknown type"}, ${
-        issue.fields.status?.name || "No status"
-      } (${statusCat}), Assignee: ${issue.fields.assignee?.displayName || "Unassigned"}, Updated: ${updated}]`;
+      return `${issue.key}: ${issue.fields.summary || "No summary"} [${issue.fields.issuetype?.name || "Unknown type"}, ${issue.fields.status?.name || "No status"} (${statusCat}), Assignee: ${issue.fields.assignee?.displayName || "Unassigned"}, Updated: ${updated}]`;
     });
 
     const totalResults = issues.total || 0;
@@ -121,7 +121,7 @@ export async function searchIssuesHandler(
           type: "text",
           text:
             formattedIssues.length > 0
-              ? `${paginationInfo}${navigationHints}\n\n${formattedIssues.join("\n")}`
+              ? `${paginationInfo}${navigationHints}\n\nURL pattern: ${urlPattern}\n\n${formattedIssues.join("\n")}`
               : "No issues found matching the criteria",
         },
       ],

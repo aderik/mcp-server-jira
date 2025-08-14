@@ -43,7 +43,10 @@ export async function getTicketDetailsHandler(
     issueIdOrKey: issueKey,
     fields: fieldsToFetch,
   });
-
+ 
+  const baseHost = (process.env.JIRA_HOST || "").replace(/\/+$/, "");
+  const url = baseHost ? `${baseHost}/browse/${issue.key}` : (issue.self || "");
+ 
   const description = extractTextFromADF(issue.fields.description);
 
   const linkedIssues = (issue.fields.issuelinks || [])
@@ -108,6 +111,7 @@ ${Object.entries(customFieldsData)
         type: "text",
         text: `
 Key: ${issue.key}
+URL: ${url}
 Title: ${issue.fields.summary || "No summary"}
 Type: ${issue.fields.issuetype?.name || "Unknown type"}
 Status: ${issue.fields.status?.name || "No status"}

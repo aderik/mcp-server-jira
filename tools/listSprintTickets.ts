@@ -25,15 +25,16 @@ export async function listSprintTicketsHandler(
     fields: ["summary", "status", "assignee"],
   });
 
-  const text =
+  const baseHost = (process.env.JIRA_HOST || "").replace(/\/+$/, "");
+  const urlPattern = baseHost ? `${baseHost}/browse/{ISSUE_KEY}` : "{issue.self}";
+  const lines =
     (issues.issues || [])
-      .map(
-        (issue: any) =>
-          `${issue.key}: ${issue.fields.summary || "No summary"} (${issue.fields.status?.name || "No status"}) [Assignee: ${
-            issue.fields.assignee?.displayName || "Unassigned"
-          }]`
-      )
-      .join("\n") || "No issues found";
-
+      .map((issue: any) =>
+        `${issue.key}: ${issue.fields.summary || "No summary"} (${issue.fields.status?.name || "No status"}) [Assignee: ${issue.fields.assignee?.displayName || "Unassigned"}]`
+      );
+  const text = (lines.length > 0)
+    ? `URL pattern: ${urlPattern}\n\n${lines.join("\n")}`
+    : "No issues found";
+ 
   return { content: [{ type: "text", text }], _meta: {} };
 }
