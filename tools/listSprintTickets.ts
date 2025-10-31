@@ -20,8 +20,10 @@ export async function listSprintTicketsHandler(
   const { projectKey } = args;
 
   const jql = `project = ${projectKey} AND sprint in openSprints()`;
-  const issues = await jira.issueSearch.searchForIssuesUsingJql({
+  // Use the new enhanced search API (old /rest/api/3/search is deprecated with 410)
+  const issues = await jira.issueSearch.searchForIssuesUsingJqlEnhancedSearch({
     jql,
+    maxResults: 100, // Get up to 100 sprint issues
     fields: ["summary", "status", "assignee"],
   });
 

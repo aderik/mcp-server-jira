@@ -78,16 +78,23 @@ export async function searchIssuesHandler(
       }
       jqlParts.push(`statusCategory = "${statusCategory}"`);
     }
-    jql = jqlParts.length > 0 ? `${jqlParts.join(" AND ")} ORDER BY updated DESC` : "ORDER BY updated DESC";
+    // Note: The new Jira enhanced search API requires bounded queries (no unbounded ORDER BY)
+    // If no filters provided, we'll search across all projects with a reasonable time window
+    if (jqlParts.length > 0) {
+      jql = `${jqlParts.join(" AND ")} ORDER BY updated DESC`;
+    } else {
+      // Default: show recently updated items from last 30 days to avoid unbounded query error
+      jql = "updated >= -30d ORDER BY updated DESC";
+    }
   }
 
   console.error(`Executing JQL query: ${jql}`);
 
   try {
-    const issues = await jira.issueSearch.searchForIssuesUsingJql({
+    // Use the new enhanced search API (old /rest/api/3/search is deprecated with 410)
+    const issues = await jira.issueSearch.searchForIssuesUsingJqlEnhancedSearch({
       jql,
       maxResults: validatedMaxResults,
-      startAt: validatedStartAt,
       fields: ["summary", "status", "issuetype", "assignee", "updated", "statusCategory"],
     });
  
@@ -99,20 +106,16 @@ export async function searchIssuesHandler(
       return `${issue.key}: ${issue.fields.summary || "No summary"} [${issue.fields.issuetype?.name || "Unknown type"}, ${issue.fields.status?.name || "No status"} (${statusCat}), Assignee: ${issue.fields.assignee?.displayName || "Unassigned"}, Updated: ${updated}]`;
     });
 
-    const totalResults = issues.total || 0;
-    const startIndex = validatedStartAt + 1;
-    const endIndex = Math.min(validatedStartAt + validatedMaxResults, totalResults);
+    const resultCount = issues.issues?.length || 0;
+    const hasMore = !!issues.nextPageToken;
 
-    const paginationInfo = totalResults > 0 ? `Showing results ${startIndex}-${endIndex} of ${totalResults}` : `No results found`;
+    const paginationInfo = resultCount > 0 
+      ? `Showing ${resultCount} result(s)${hasMore ? ' (more available)' : ''}`
+      : `No results found`;
 
     let navigationHints = "";
-    if (validatedStartAt > 0) {
-      const prevStartAt = Math.max(0, validatedStartAt - validatedMaxResults);
-      navigationHints += `\nPrevious page: Use startAt=${prevStartAt}`;
-    }
-    if (endIndex < totalResults) {
-      const nextStartAt = validatedStartAt + validatedMaxResults;
-      navigationHints += `\nNext page: Use startAt=${nextStartAt}`;
+    if (hasMore) {
+      navigationHints += `\nNote: More results available. The new Jira API uses token-based pagination which is not yet fully supported in this MCP tool.`;
     }
 
     return {
@@ -130,10 +133,14 @@ export async function searchIssuesHandler(
   } catch (error: any) {
     console.error(`Error searching for issues: ${error.message}`);
     if (error.response) {
+      console.error(`Response status: ${error.response.status}`);
       console.error(`Response data: ${JSON.stringify(error.response.data)}`);
     }
+    const errorDetails = error.response?.data 
+      ? `\n\nResponse (${error.response.status}): ${JSON.stringify(error.response.data, null, 2)}`
+      : '';
     return {
-      content: [{ type: "text", text: `Error searching for issues: ${error.message}` }],
+      content: [{ type: "text", text: `Error searching for issues: ${error.message}${errorDetails}` }],
       isError: true,
       _meta: {},
     };

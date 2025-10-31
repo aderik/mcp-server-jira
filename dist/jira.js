@@ -4,6 +4,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Version3Client } from "jira.js";
 import { listJiraFiltersDefinition, listJiraFiltersHandler } from "./tools/listJiraFilters.js";
+import dotenv from "dotenv";
+// Load .env file if it exists (for local development)
+dotenv.config();
 import { listUsersDefinition, listUsersHandler } from "./tools/listUsers.js";
 import { searchIssuesDefinition, searchIssuesHandler } from "./tools/searchIssues.js";
 import { listSprintTicketsDefinition, listSprintTicketsHandler } from "./tools/listSprintTickets.js";

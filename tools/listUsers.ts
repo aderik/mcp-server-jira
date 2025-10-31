@@ -1,4 +1,4 @@
-import { Version3Client } from "jira.js";
+import { Version3Client, Version3Models } from "jira.js";
 import type { McpResponse } from "../utils.js";
 
 export const listUsersDefinition = {
@@ -7,6 +7,10 @@ export const listUsersDefinition = {
   inputSchema: {
     type: "object",
     properties: {
+      query: {
+        type: "string",
+        description: "Optional search string to filter users (uses Jira user search).",
+      },
       maxResults: {
         type: "number",
         description: "Optional maximum number of results to return (default: 50, max: 1000)",
@@ -15,21 +19,50 @@ export const listUsersDefinition = {
   },
 };
 
-export async function listUsersHandler(jira: Version3Client, args: { maxResults?: number } = {}): Promise<McpResponse> {
-  const { maxResults = 50 } = args;
+export async function listUsersHandler(
+  jira: Version3Client,
+  args: { query?: string; maxResults?: number } = {}
+): Promise<McpResponse> {
+  const { maxResults = 50, query } = args;
   const validatedMaxResults = Math.min(Math.max(1, maxResults), 1000);
 
   try {
-    const usersResponse = await jira.users.getAllUsers({
-      maxResults: validatedMaxResults,
-    });
+    const results: Version3Models.User[] = [];
+    let startAt = 0;
 
-    if (!usersResponse || usersResponse.length === 0) {
+    while (results.length < validatedMaxResults) {
+      const pageMax = Math.min(100, validatedMaxResults - results.length);
+      if (pageMax <= 0) {
+        break;
+      }
+
+      const trimmedQuery = query?.trim();
+      const searchParams: { query?: string; startAt: number; maxResults: number } = {
+        startAt,
+        maxResults: pageMax,
+        query: trimmedQuery || "", // Empty string returns all users
+      };
+
+      const usersPage = (await jira.userSearch.findUsers(searchParams)) as Version3Models.User[];
+
+      if (!usersPage || usersPage.length === 0) {
+        break;
+      }
+
+      results.push(...usersPage);
+      if (usersPage.length < pageMax) {
+        break;
+      }
+
+      startAt += usersPage.length;
+    }
+
+    if (results.length === 0) {
       return { content: [{ type: "text", text: "No users found." }], _meta: {} };
     }
 
-    const filteredUsers = usersResponse.filter((user) => {
-      return user.active && user.accountType === "atlassian";
+    const filteredUsers = results.filter((user) => {
+      return user.active !== false; // Include active users (accountType filter removed for broader compatibility)
     });
 
     const formattedUsers = filteredUsers
@@ -43,7 +76,7 @@ export async function listUsersHandler(jira: Version3Client, args: { maxResults?
       content: [
         {
           type: "text",
-          text: `Active Atlassian users found: ${filteredUsers.length} (filtered from ${usersResponse.length} total)\n\n${formattedUsers}`,
+          text: `Active Atlassian users found: ${filteredUsers.length} (filtered from ${results.length} total)\n\n${formattedUsers}`,
         },
       ],
       _meta: {},
