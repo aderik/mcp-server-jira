@@ -1,8 +1,32 @@
 {
-  "name": "jira",
-  "version": "1.0.0",
+  "name": "@aderik/mcp-server-jira",
+  "version": "2.0.0",
   "type": "module",
   "main": "dist/jira.js",
+  "description": "MCP server for Jira - Fixed for 2025 API deprecations. Search issues, manage tickets, and automate workflows through the Model Context Protocol.",
+  "author": "Aderik Teekman",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aderik/mcp-server-jira.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aderik/mcp-server-jira/issues"
+  },
+  "homepage": "https://github.com/aderik/mcp-server-jira#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "jira",
+    "atlassian",
+    "jira-api",
+    "claude",
+    "cursor",
+    "ai-tools"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc -w",
@@ -11,12 +35,9 @@
     "start:dev": "tsx --watch jira.ts",
     "fmt:check": "prettier --check .",
     "fmt": "prettier --write .",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prepublishOnly": "npm run build"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.3",
     "@types/node": "^22.10.2",
