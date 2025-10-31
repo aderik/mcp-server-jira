@@ -2,5 +2,6 @@ node_modules
 dist
 dist/.tsbuildinfo
 .env
+.npmrc
 .DS_Store
 .idea
